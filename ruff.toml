@@ -1,0 +1,17 @@
+# Section 9's `ruff check .` (CI and the local pre-commit hook, same
+# config either way — both just invoke ruff, which auto-discovers this
+# file) lints this project's actual source: src/, app/, scripts/, tests/.
+#
+# notebooks/ is excluded on purpose. Ruff lints .ipynb cells the same as
+# .py files by default, and Notebook 06 (see notebooks/README.md) is a
+# training artifact kept for lineage/review — never executed by the
+# service, the Docker image, or CI (.dockerignore excludes the whole
+# directory too) — not production source. An unused import left over from
+# an earlier exploratory cell is normal there and not something worth
+# fixing after the fact: rewriting a notebook's actual historical content
+# to satisfy a linter it was never meant to run against would make it a
+# less faithful record of what Notebook 06 actually did, which is the one
+# thing notebooks/ exists to preserve. This also keeps the pre-commit
+# ruff hook (which runs with --fix) from silently rewriting notebook cells
+# at commit time.
+exclude = ["notebooks"]

@@ -48,6 +48,70 @@ of this project rather than leading with the 93% accuracy figure alone.
 See the comment block above `KNOWN_METRICS` in `src/training/log_model.py`
 for the full reasoning behind the macro-avg-vs-weighted-avg choice.
 
+**Model choice, read honestly:** Notebook 06's own validation-set
+comparison actually scores Logistic Regression slightly *higher* than
+Random Forest on both F1 (0.234 vs 0.224) and ROC AUC (0.765 vs 0.737) —
+sorting that comparison table by F1 puts Logistic Regression first, not
+Random Forest. Random Forest is still the one evaluated on the test set
+and saved (`joblib.dump(rf_model, "artifacts/final_model.pkl")`) — a
+manual choice in the notebook (`# إذا كان Random Forest الأفضل` — "if
+Random Forest is the best"), not a programmatic pick of whichever model
+actually scored highest. The reasoning isn't visible in Notebook 06
+itself, and Task 3's "no training inside the inference pipeline" rule
+means this service serves whatever Notebook 06 actually saved regardless —
+reported here rather than glossed over, same as the `roc_auc=0.61`
+limitation above.
+
+### Proof: the pipeline's output matches the notebook's output on the same input
+
+Qafza's Definition of Done asks for this explicitly: "تثبت إن مخرج
+البايبلاين مطابق لمخرج النوتبوك على نفس المدخل." `tests/model/test_notebook_parity.py`
+is that proof, kept as a permanent, automated test rather than a one-off
+manual check.
+
+Notebook 06 itself never engineers features — it loads already-engineered
+`test_features.parquet` and calls `rf_model.predict(X_test)` /
+`.predict_proba(X_test)` directly. So "the notebook's output" for a raw
+order reduces to: the same fitted model, called on a feature row built
+from the same fitted `imputer`/`encoder`/`scaler` — wired together by
+hand, the way a notebook cell would, not through this project's own
+orchestration code. That's exactly what the test builds as a second,
+independent path: for a given raw order, it computes the prediction (1) via
+`run_pipeline()` — the exact function `/predict` calls — and (2) via a
+hand-wired reconstruction that imports only the fitted `model` / `imputer`
+/ `encoder` / `scaler` objects themselves (the same MLflow-registered
+artifacts) plus each one's own `feature_names_in_` metadata, and does
+impute → scale → encode → reindex → predict from scratch, sharing no code
+with `src/features/feature_engineering.py` or `src/data/preprocessing.py`.
+Run against two different orders (fully-specified, and every optional
+field missing so the imputer does real work), both agree exactly —
+prediction *and* probability, not just the predicted class.
+
+Confirmed in a genuinely fresh virtualenv with `requirements-dev.txt`
+pinned exactly (`scikit-learn==1.8.0`, `pandas==2.2.3`, `mlflow==3.16.1`),
+against the real model: `python -m src.training.log_model` (no
+`--allow-placeholder`) registered `models/final_model.pkl` itself, not a
+stand-in — both cases passed, and the full suite (115 tests) still passed
+clean alongside them. It also passes in CI against the dummy model (see
+"Why CI runs on a dummy model" below) — the test never asserts a specific
+value, only that both paths agree, which holds for either model.
+
+**What this proves:** the FastAPI/pipeline plumbing (`create_features()`,
+`preprocess()`, the API/schema layers) doesn't alter what the trained
+model + trained preprocessors would produce for a given raw order — the
+exact class of bug ("training-serving skew") this kind of check exists to
+catch — using the real artifacts Notebook 06 produced, independently
+confirmed above to be `RandomForestClassifier(n_estimators=100,
+random_state=42, n_jobs=-1)`, 42/42 features, loading clean.
+
+**What this doesn't prove:** that `review_missing`'s one-line derivation,
+or the imputer/encoder/scaler's fitted parameters themselves, are a
+bit-exact match to Notebook 05's *original* computation — Notebook 05 (the
+feature-engineering notebook) wasn't available when this test was written,
+only Notebook 06 was. `notebooks/06_Model Training  Evaluation.ipynb` is
+included in this repo specifically so this claim can be checked against
+its actual source instead of taken on faith — see `notebooks/README.md`.
+
 ## Project status
 
 Built in the order the task specifies. A section is only checked once it is
@@ -61,8 +125,9 @@ wired into the running service end to end — not just present as a file.
       verified with a real add/push/delete/pull round trip (md5-identical)
 - [x] 5. Experiment tracking & model registry (MLflow)
 - [x] 6. Testing (pytest) — 94 tests at the time (unit / data / model /
-      integration); 113 as of Section 10 (+ `tests/monitoring`) — see
-      "Testing" below for the current count
+      integration); 113 as of Section 10 (+ `tests/monitoring`); 115 once
+      `tests/model/test_notebook_parity.py` joined them (see "Model
+      provenance" above) — see "Testing" below for the current count
 - [x] 7. API (`/predict`, `/predict/batch`)
 - [x] 8. Docker & Docker Compose — verified with a real Docker daemon,
       real model, `/predict/batch` tested live through the containers;
@@ -119,8 +184,10 @@ olist_mlops_task3_phase1/
 │                          in a fresh copy of this project until then)
 ├── mlruns/                MLflow's artifact store — same local-dev-only,
 │                           created-on-first-run caveat as mlflow.db
-├── notebooks/             the 6 training notebooks, for lineage — never
-│                          executed by the service or the image
+├── notebooks/             training notebooks, for lineage — never executed
+│                          by the service or the image. Notebook 06 (model
+│                          training/evaluation) is included; 01–05 are not
+│                          yet copied in — see notebooks/README.md
 ├── scripts/
 │   └── register_if_needed.py   docker-compose's `register` service —
 │                                 registers the real model (real metrics,
@@ -175,6 +242,10 @@ olist_mlops_task3_phase1/
 │   └── integration/           API routes + the pipeline, end to end —
 │                               including /metrics and /monitoring/summary
 ├── pytest.ini
+├── ruff.toml                 excludes notebooks/ from lint — a training
+│                             artifact kept for lineage, not source; keeps
+│                             the pre-commit ruff hook (--fix) from
+│                             rewriting notebook cells at commit time too
 ├── requirements.txt         runtime dependencies, pinned
 ├── requirements-dev.txt     + test / lint / format tooling
 ├── Dockerfile               the API image — multi-stage, non-root, healthcheck
@@ -490,7 +561,7 @@ pip install -r requirements-dev.txt   # pytest, pytest-cov, httpx, ruff, black
 pytest
 ```
 
-113 tests across `tests/unit`, `tests/data`, `tests/model`,
+115 tests across `tests/unit`, `tests/data`, `tests/model`,
 `tests/monitoring`, and `tests/integration` — one command, no separate
 server or fixtures to set up by hand (`tests/conftest.py` registers a
 model in MLflow automatically if this is a completely fresh clone). For
@@ -515,7 +586,7 @@ passes:
 
 | Job | Runs on | Steps | When |
 |---|---|---|---|
-| `test` | every push and PR against `main` | ruff → `black --check` → pytest (113 tests) | always |
+| `test` | every push and PR against `main` | ruff → `black --check` → pytest (115 tests) | always |
 | `build-and-push` | `needs: test` | build the API image, push to GHCR as `:latest` and `:<commit sha>` | only a real push to `main`, never a PR |
 
 "A failed test must stop the pipeline" is true here for free, not through
@@ -871,8 +942,11 @@ infrastructure, not files that look right.
 
 Not blockers, just not resolved yet:
 
-- The six training notebooks are not yet copied into `notebooks/` (kept out
-  so far — see `notebooks/TODO_COPY_NOTEBOOKS.txt`).
+- 5 of the 6 training notebooks (01–05: data loading/cleaning, label
+  creation, EDA, feature engineering) are not yet copied into `notebooks/`.
+  Notebook 06 (model training & evaluation) *is* included now, specifically
+  so `tests/model/test_notebook_parity.py`'s claims can be checked against
+  its actual source — see `notebooks/README.md`.
 - Development moved from a Windows machine where Docker Desktop could not
   run at all (its WSL2 backend hit a Group-Policy-restricted logon-type
   error, an IT policy restriction on that account, unrelated to this
