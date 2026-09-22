@@ -65,12 +65,11 @@ wired into the running service end to end — not just present as a file.
       real model, `/predict/batch` tested live through the containers;
       connection string environment-driven via `.env`/`.env.example`,
       `.gitignore` added so a real `.env` can never reach the repo
-- [ ] 9. CI/CD — pipeline + pre-commit hooks written and locally validated
-      (`actionlint` on the workflow, the exact CI steps re-run end to end
-      against a simulated fresh checkout, `pre-commit run --all-files`
-      against the real hook repos) — left unchecked on purpose until a real
-      push shows green on GitHub's own Actions tab, not just simulated here;
-      see "CI/CD (Section 9)" below
+- [x] 9. CI/CD — GitHub Actions verified on real infrastructure, not just
+      simulated: [run #1](https://github.com/Salehmsa/olist-delay-prediction-mlops/actions/runs/35691357659)
+      on the first push to `main` — `test` green (1m31s), `build-and-push`
+      green (1m43s) right after it, image published to GHCR; pre-commit
+      hooks installed and active locally too
 - [ ] 10. Monitoring
 
 ## Structure
