@@ -1,0 +1,59 @@
+# Section 8: a standalone MLflow tracking/registry server, its own
+# container. This is the actual fix for Task 3's "store artifacts
+# somewhere the container can reach - not on your laptop only":
+#
+# Before: config.yaml's mlflow.tracking_uri pointed at a local
+# sqlite:///mlflow.db + mlruns/ folder next to the code - fine on your
+# laptop, meaningless inside a container (nothing there to read).
+#
+# After: every other service in docker-compose.yml reaches THIS
+# container over the compose network at http://mlflow:5000 (see
+# src/utils/config_loader.py's MLFLOW_TRACKING_URI override), and this
+# container's own data lives in the mlflow_data Docker volume - portable,
+# survives a container being recreated, not tied to any one host's
+# filesystem layout.
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir mlflow==3.16.1
+
+WORKDIR /mlflow_data
+
+EXPOSE 5000
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=5 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=3)" || exit 1
+
+# Same SQLite-backend choice config.yaml's comment explains (the Model
+# Registry needs a database-backed store, not the plain file store) -
+# just living inside the mounted volume instead of next to the code now.
+#
+# --artifacts-destination (NOT --default-artifact-root): this is what
+# makes artifact upload/download work across containers. With
+# --default-artifact-root set to a bare local path, the SERVER hands
+# clients a plain file:///mlflow_data/... URI and expects THEM to write
+# there directly - fine on one machine, but `register`/`api` are
+# different containers with no /mlflow_data mount at all, so that write
+# fails with PermissionError: [Errno 13] Permission denied: '/mlflow_data'.
+# --artifacts-destination instead tells THIS server "physically store
+# files here", while (per mlflow's own docs) leaving --default-artifact-root
+# unset makes it hand out mlflow-artifacts:/... URIs, which route every
+# artifact read/write back through this server's own HTTP API - so a
+# client never needs filesystem access to /mlflow_data at all.
+#
+# --allowed-hosts: newer mlflow versions validate the incoming Host header
+# on every request (DNS-rebinding protection) and reject anything not on
+# this list with a 403 - "Invalid Host header - possible DNS rebinding
+# attack detected". Without this flag, `register` and `api` (which both
+# reach this container over the compose network as http://mlflow:5000 -
+# see docker-compose.yml / config_loader.py's MLFLOW_TRACKING_URI
+# override) get rejected, because "mlflow" isn't localhost. `mlflow:*`
+# covers that compose-network traffic; `localhost:*`/`127.0.0.1:*` cover
+# opening http://localhost:5000 in a browser on the host (the port
+# mapping in docker-compose.yml). /health is unaffected either way - the
+# HEALTHCHECK above keeps working without this flag too.
+CMD ["mlflow", "server", \
+     "--host", "0.0.0.0", \
+     "--port", "5000", \
+     "--backend-store-uri", "sqlite:////mlflow_data/mlflow.db", \
+     "--artifacts-destination", "/mlflow_data/mlruns", \
+     "--allowed-hosts", "mlflow:*,localhost:*,127.0.0.1:*"]

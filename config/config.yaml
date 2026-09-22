@@ -1,0 +1,46 @@
+# -----------------------------------------------------------------------------
+# Central configuration. Nothing in app/ or src/ should hardcode a path, a
+# host/port, or a parameter — it comes from here, loaded once via
+# src/utils/config_loader.py.
+# -----------------------------------------------------------------------------
+
+# Fitted artifacts saved by Notebooks 05 & 06. Section 5: these paths are now
+# read by ONE consumer only — src/training/log_model.py, which uploads them
+# into MLflow. The running service (predict.py / preprocessing.py) no longer
+# reads models/*.pkl directly; it loads everything through the mlflow: block
+# below instead. Keep these paths in sync with wherever a fresh notebook run
+# saves its artifacts — log_model.py is what you re-run after that.
+model_path: models/final_model.pkl
+encoder_path: models/encoder.pkl
+scaler_path: models/scaler.pkl
+imputer_path: models/imputer.pkl
+feature_list_path: models/feature_list.json
+
+# Section 5: experiment tracking + model registry. SQLite backend, not the
+# plain local file store — MLflow's Model Registry (registering a version,
+# aliases/stages) requires a database-backed tracking store; the file store
+# only supports tracking, not registry. Still 100% local, no separate
+# `mlflow server` process required — the Python client talks to mlflow.db
+# directly, both from log_model.py and from the running API.
+mlflow:
+  tracking_uri: "sqlite:///mlflow.db"
+  experiment_name: "olist_delay_classifier"
+  registered_model_name: "olist_delay_classifier"
+  # Modern MLflow: what the service actually loads through
+  # (models:/<registered_model_name>@<model_alias>).
+  model_alias: "production"
+  # Classic MLflow "stage" — the vocabulary Task 3 itself uses ("a version
+  # and a stage"). Deprecated since MLflow 2.9 in favor of aliases above,
+  # but still set by log_model.py so it shows up under the older vocabulary
+  # too. The service does not read this one; it reads model_alias.
+  model_stage: "Production"
+
+api:
+  title: "Olist Delivery Delay Prediction API"
+  host: "0.0.0.0"
+  port: 8000
+
+logging:
+  level: INFO
+  log_dir: logs
+  log_file: app.log

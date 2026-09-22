@@ -1,0 +1,39 @@
+# Runtime dependencies — pinned for reproducible inference.
+#
+# IMPORTANT: scikit-learn is pinned to 1.8.0 because that is the EXACT
+# version your models/*.pkl (imputer, encoder, scaler) were fitted under -
+# confirmed by sklearn's own InconsistentVersionWarning at load time, not
+# guessed (it names the fitting version directly:
+# "Trying to unpickle estimator SimpleImputer from version 1.8.0 when
+# using version 1.5.2"). 1.5.2 was the earlier pin here and it was wrong -
+# it happened to load and transform without crashing when checked, but
+# sklearn's own docs make no correctness guarantee across versions
+# ("might lead to breaking code or invalid results"), and a silently wrong
+# prediction is worse than a crash because it looks fine. Matching the
+# fitting version exactly removes that risk instead of hoping it's fine.
+# If you ever re-fit against a different scikit-learn version, update this
+# pin to match — same for pandas/numpy: confirm with
+# pip freeze | findstr /I "pandas numpy scikit-learn joblib"
+# run inside the same environment/kernel you used for Notebooks 05-06.
+pandas==2.2.3
+numpy==1.26.4
+scikit-learn==1.8.0
+joblib==1.4.2
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pyyaml==6.0.2
+
+# Section 4: per-request data validation (src/validation/). Confirmed
+# working end-to-end against the ephemeral/fluent API at this version —
+# a much older 0.1x-series GE uses a different API and this code will not
+# run against it.
+great_expectations==1.23.1
+
+# Section 5: experiment tracking + model registry. The running SERVICE
+# imports this now (src/inference/model_registry.py loads the model through
+# it) — unlike dvc, that's why this lives here and not in
+# requirements-dev.txt. Verified end-to-end at this version: log a model,
+# register it, alias it "production", load it back via
+# models:/name@alias, download a run's artifacts.
+mlflow==3.16.1

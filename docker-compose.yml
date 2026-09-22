@@ -1,0 +1,69 @@
+# Section 8: one command brings up the whole stack on a fresh clone -
+# `docker compose up --build` - matching Task 3's own definition of done
+# ("clone the repo, start everything with one command"). Three services:
+#
+#   mlflow    the tracking/registry server (Dockerfile.mlflow) - artifacts
+#             live in the mlflow_data volume, not on the host laptop.
+#   register  runs once, registers a model against that server if none
+#             exists yet (scripts/register_if_needed.py), then exits.
+#   api       the FastAPI service, only starts once mlflow is healthy AND
+#             register has finished successfully.
+#
+# Local (non-Docker) development is untouched: MLFLOW_TRACKING_URI is only
+# set here, inside the containers - config.yaml's local
+# sqlite:///mlflow.db default still applies when you run uvicorn directly
+# on your machine (see README's "Setup" / "Run the API" sections).
+#
+# ${MLFLOW_TRACKING_URI:-http://mlflow:5000} below, not a bare string:
+# Compose auto-substitutes from a `.env` file in this directory if one
+# exists (see .env.example), so this connection string is
+# environment-driven rather than hardcoded here - Section 8's "use
+# environment variables for secrets and connection strings" - while the
+# `:-http://mlflow:5000` default means `docker compose up --build` still
+# works with zero setup and no `.env` file at all.
+
+services:
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow_data
+    restart: unless-stopped
+
+  register:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "scripts/register_if_needed.py"]
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    # No restart policy on purpose - this container is meant to run once,
+    # exit 0, and stay stopped (docker-compose.yml has no `restart` line
+    # for it, and its own script is idempotent if it's ever run again).
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      register:
+        condition: service_completed_successfully
+    volumes:
+      - api_logs:/app/logs
+    restart: unless-stopped
+
+volumes:
+  mlflow_data:
+  api_logs:

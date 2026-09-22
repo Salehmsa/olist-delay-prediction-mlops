@@ -1,0 +1,6 @@
+[cache]
+    type = "hardlink,symlink,copy"
+[core]
+    remote = local_remote
+['remote "local_remote"']
+    url = C:\dvc_storage\olist_model

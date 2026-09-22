@@ -1,0 +1,23 @@
+-r requirements.txt
+
+# Testing
+pytest==8.3.4
+pytest-cov==6.0.0
+httpx==0.28.1          # required by FastAPI's TestClient (Section 6/7)
+
+# Lint / format — same tools Section 9's CI pipeline runs
+ruff==0.8.4
+black==24.10.0
+
+# Git hooks (Section 9)
+pre-commit==4.0.1
+
+# Section 4: data/artifact versioning (a dev/ops tool — dvc is never
+# imported by the running service, so it stays out of requirements.txt).
+# Not pinned to an exact patch: unlike scikit-learn/pandas, DVC's version
+# doesn't affect model behavior, and pinning it precisely against a
+# dependency (antlr4-python3-runtime) that some environments fail to build
+# from source risks handing you a broken install. If `pip install` fails
+# on antlr4-python3-runtime / an "install_layout" error, run
+# `pip install "setuptools<72"` first, then retry.
+dvc>=3.50,<4

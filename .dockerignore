@@ -1,0 +1,62 @@
+# Section 8. Mirrors .gitignore's reasoning where it applies, plus
+# Docker-specific exclusions. models/*.pkl is deliberately NOT excluded -
+# docker-compose.yml's `register` service needs those files to log/
+# register a model on first boot, same as running log_model.py locally.
+
+# Version control / Docker meta-files - irrelevant inside the image
+.git/
+.gitignore
+.dockerignore
+Dockerfile
+Dockerfile.mlflow
+docker-compose.yml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments - the image builds its own (Dockerfile's builder
+# stage); a local .venv here would be the wrong Python/OS anyway.
+.venv/
+venv/
+env/
+
+# Secrets / environment - never bake these into an image layer.
+.env
+.env.*
+!.env.example
+
+# Section 5/6 local MLflow store - superseded inside Docker by the
+# separate mlflow service + mlflow_data volume (Dockerfile.mlflow,
+# docker-compose.yml). Excluding these also stops a stale local registry
+# snapshot from ever being baked into the image.
+mlflow.db
+mlruns/
+mlartifacts/
+
+# Runtime logs - written fresh inside the container (api_logs volume);
+# don't ship whatever happens to be in logs/ on the host.
+logs/*.log
+
+# Never executed by the service or the image (README: "never executed by
+# the service or (later) the image") - large, and irrelevant at runtime.
+notebooks/
+
+# Test suite / tooling output - requirements-dev.txt only, never
+# installed in the image, so these would be dead weight anyway.
+tests/
+tests_disabled/
+htmlcov/
+.coverage
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

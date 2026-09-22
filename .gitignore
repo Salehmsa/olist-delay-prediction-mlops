@@ -1,0 +1,50 @@
+# Version control hygiene for this repo. NOT the same list as
+# .dockerignore on purpose: .dockerignore keeps things OUT OF THE IMAGE
+# (notebooks/, tests/ - irrelevant at runtime, but very much meant to be
+# tracked in git as source). This file keeps things out of GIT ITSELF -
+# generated state, machine-specific environments, and secrets.
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+htmlcov/
+.coverage
+
+# Virtual environments - never commit an interpreter/OS-specific env.
+.venv/
+venv/
+env/
+
+# Secrets / connection strings (Task 3, Section 8: "use environment
+# variables for secrets and connection strings, never commit them to the
+# repo"). .env.example is the committed template documenting which
+# variables exist and their safe local defaults - see "Configuration" in
+# README.md. Your own .env (if you create one to override a default) is
+# never tracked.
+.env
+.env.*
+!.env.example
+
+# Local-dev-only MLflow store - config.yaml's default sqlite:///mlflow.db
+# used only when NOT running in Docker. Generated on first
+# `log_model.py` run, superseded inside Docker by the mlflow service +
+# the mlflow_data volume (Dockerfile.mlflow, docker-compose.yml). Either
+# way this is generated data, not source - never committed.
+mlflow.db
+mlruns/
+mlartifacts/
+
+# Runtime logs - written fresh wherever this runs.
+logs/*.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
