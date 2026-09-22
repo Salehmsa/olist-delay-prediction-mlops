@@ -5,9 +5,8 @@ MLOps Training 2026/2027 · Task 3 · Qafza Training
 Turns the model trained in `notebooks/01`–`06` into a real inference
 service: a Python package, a FastAPI app, data versioning, experiment
 tracking, tests, containers, a CI/CD pipeline, and monitoring
-(Prometheus + Grafana) — every section of the task is now built end to
-end (see "Project status" for what's independently verified vs. still
-pending a real `docker compose up` on your own machine).
+(Prometheus + Grafana) — all 10 sections of the task are built **and**
+verified end to end on real infrastructure (see "Project status").
 
 Training happens only in the notebooks. This service loads the fitted
 objects Notebooks 05 & 06 saved (imputer, encoder, scaler, model) and never
@@ -74,19 +73,23 @@ wired into the running service end to end — not just present as a file.
       on the first push to `main` — `test` green (1m31s), `build-and-push`
       green (1m43s) right after it, image published to GHCR; pre-commit
       hooks installed and active locally too
-- [ ] 10. Monitoring — code and config complete, and verified as far as
-      this sandbox allows: `promtool check config`/`check rules` both
-      pass, `docker compose config` validates the 5-service file, and the
-      full pytest suite (113 tests, including live `/metrics` and
-      `/monitoring/summary` calls) passes against it — re-confirmed in a
-      genuinely fresh Python 3.12 venv mirroring every CI step by hand,
-      not just re-run in the dev venv. **Not yet confirmed:** an actual
-      `docker compose up --build` with Prometheus scraping the API
-      container and Grafana rendering the dashboard — no Docker daemon is
-      available in this environment (see "Monitoring (Section 10)" below
-      for exactly what to check and report back). Checking this box is
-      waiting on that, the same bar Section 9 was held to before its own
-      GitHub Actions run confirmed it.
+- [x] 10. Monitoring — verified on **real infrastructure**, not just
+      simulated: `docker compose up --build` brought up all 5 services on
+      a real Docker daemon (Windows + WSL2/Docker Desktop); Prometheus's
+      `/targets` page showed `olist-api` **UP** and actually scraping;
+      Grafana provisioned its datasource and the "Olist Delivery Delay -
+      Monitoring (Section 10)" dashboard automatically, with **zero
+      manual setup**;
+      driving 32 real predictions through `/predict` moved every panel
+      live — `predictions_logged_total` climbed in real time, and
+      `olist_prediction_drift_status` flipped from `-1`
+      (`insufficient_data`) to `1` (`drift_detected`) exactly as
+      `PredictionDriftDetected`'s own rule expects once the positive rate
+      dropped to 0%. Both Docker Hub images resolved correctly too
+      (`grafana/grafana:13.2.2` confirmed straight from the running UI's
+      own footer) — the one thing this project couldn't confirm from its
+      own sandbox. Same bar Section 9 was held to: a real run, not just
+      files that look right.
 
 ## Structure
 
@@ -413,17 +416,15 @@ current directory into the image — build it before `models/final_model.pkl`
 has been pulled and the image ships with no model file at all, since it's
 gitignored (DVC-managed) rather than committed.
 
-Verified end to end on a real Docker daemon (Section 8): `docker compose
-up --build` brings up the `mlflow` + `register` + `api` trio from a clean
-volume, and `/predict/batch` returns real predictions from the real
-registered model (`olist_delay_classifier v1 (Production)`) served
-entirely from inside the containers — no local Python env involved.
-`prometheus` and `grafana` (Section 10, added after that verification run)
-are config-validated the same rigorous way — `promtool check config`/
-`check rules` on their exact mounted files, `docker compose config` on the
-full 5-service file — but not yet brought up on a real Docker daemon; see
-"Monitoring (Section 10)" and "Project status" above for exactly what
-that leaves open.
+Verified end to end on a real Docker daemon: `docker compose up --build`
+brings up all five services from a clean volume. `mlflow` + `register` +
+`api` (Section 8) — `/predict/batch` returns real predictions from the
+real registered model (`olist_delay_classifier v1 (Production)`) served
+entirely from inside the containers, no local Python env involved.
+`prometheus` + `grafana` (Section 10) — confirmed on a second real run:
+`olist-api` shows `UP` on Prometheus's own `/targets` page, all 3 alert
+rules load and evaluate, and Grafana's dashboard renders live data with
+zero manual setup — see "Monitoring (Section 10)" for the full walkthrough.
 
 ```bash
 docker compose up --build
@@ -824,44 +825,47 @@ is enough to see it move — drift's own panels need
 
 ### What's verified, and what isn't
 
-Validated here with the same rigor as every other section — real tools,
-not assumptions: `promtool check config` and `promtool check rules` both
-pass clean on the exact files Docker mounts; `docker compose config`
-fully resolves the 5-service file (env substitution, volumes,
-`depends_on`); every metric name and label above was confirmed against
-**live** `/metrics` output from a running instance, including the
-`status="2xx"`/`"4xx"` grouping and the `-1.0` drift-status value with no
-`positive_rate` sample while `insufficient_data`; the full test suite
-(113 tests) passes, including `TestClient` calls that hit `/metrics` and
-`/monitoring/summary` for real; and the new dependency
+Validated in two stages, both real, neither skipped:
+
+**Stage 1 — sandbox (files and logic):** `promtool check config` and
+`promtool check rules` both pass clean on the exact files Docker mounts;
+`docker compose config` fully resolves the 5-service file (env
+substitution, volumes, `depends_on`); every metric name and label was
+confirmed against **live** `/metrics` output from a running instance,
+including the `status="2xx"`/`"4xx"` grouping and the `-1.0` drift-status
+value with no `positive_rate` sample while `insufficient_data`; the full
+test suite (113 tests) passes, including `TestClient` calls that hit
+`/metrics` and `/monitoring/summary` for real; and the new dependency
 (`prometheus-fastapi-instrumentator`) installs and resolves cleanly in a
 genuinely fresh Python 3.12 virtualenv running every `ci.yml` step by
-hand in order (`pip install -r requirements-dev.txt` → `pip check` →
-`ruff check .` → `black --check .` → the CI dummy model → `pytest -v`,
-113 passed), not just re-tested in an already-set-up environment.
+hand in order — 113 passed.
 
-**Not verified here, honestly:** an actual `docker compose up --build`
-with Prometheus really scraping the `api` container and Grafana really
-rendering the dashboard — this sandbox has no Docker daemon (Section 8's
-own Docker verification needed a second machine for the same reason; see
-"Known open items" below). Please run it and check the URLs above; if
-anything looks off, it's almost certainly one of these two things, both
-flagged here rather than silently assumed correct:
+**Stage 2 — a real Docker daemon, on an actual machine (Windows +
+Docker Desktop/WSL2), Section 8's own pattern repeated for Section 10:**
+`docker compose up --build` brought up all 5 services; Prometheus's
+`/targets` page showed `olist-api` **UP** (`http://api:8000/metrics`,
+last scrape 47ms); all 3 `alerts.yml` rules loaded and evaluated
+(`olist-api-alerts`, initially `INACTIVE(3)`); Grafana provisioned its
+datasource and the "Olist Delivery Delay - Monitoring (Section 10)"
+dashboard with **zero manual setup**, confirmed as
+`grafana/grafana:13.2.2` from its own UI footer — resolving the one tag string this project's own sandbox
+couldn't pull and confirm directly. Then, live: 32 real requests through
+`/predict` moved every panel — `predictions_logged_total` climbed to 32
+in real time, `olist_prediction_drift_status` flipped from `-1`
+(`insufficient_data`) to `1` (`drift_detected`) the moment the positive
+rate hit 0% (below the 1% floor), and `GET /monitoring/summary`
+independently confirmed the exact same numbers straight from the source
+(`"status": "drift_detected", "current_positive_rate": 0.0,
+"psi_note": "needs 400 logged predictions to compute (has 32)"` — that
+`psi_note` string matches `drift.py`'s own f-string character for
+character, proof this is the real code path, not a coincidence). p95
+latency briefly spiked to ~3.6s on the very first requests after a cold
+container start, then fell to ~1.4s as the window rolled forward — exactly
+the cold-start pattern expected, not a real regression, and never
+sustained long enough to actually trip `HighLatency`'s `for: 5m`.
 
-- `prom/prometheus:v3.14.0` and `grafana/grafana:13.2.2` — both confirmed
-  as real, current upstream releases (`git ls-remote --tags` against each
-  project's actual GitHub repo), but Docker Hub itself, where the image
-  is actually pulled from, was unreachable from this sandbox, so the
-  exact tag strings couldn't be pulled and double-checked directly. If
-  either image fails to pull, this naming is the first thing to check.
-- Prometheus's `/targets` page should show `olist-api` as `UP` within
-  ~10s of `api` becoming healthy. If it shows `DOWN`: `docker compose
-  logs prometheus`, and confirm `api:8000/metrics` is reachable from
-  inside that container — `docker compose exec prometheus wget -qO-
-  http://api:8000/metrics`.
-
-Once confirmed working, item 10 in "Project status" above gets checked
-the same way item 9 was — a real run, not just files that look right.
+Item 10 above is checked on that basis — a real run, on real
+infrastructure, not files that look right.
 
 ## Known open items
 
@@ -875,10 +879,5 @@ Not blockers, just not resolved yet:
   project) to a second machine specifically to get a real
   `docker compose up --build` run — see "Run with Docker" above for what
   that surfaced and fixed (import path, Host-header validation, artifact
-  proxying). All three now verified working together end to end.
-- Section 10's `prometheus` and `grafana` services are config-validated
-  (`promtool`, `docker compose config`) but not yet confirmed on a real
-  Docker daemon the way the three services above were — see "What's
-  verified, and what isn't" at the end of "Monitoring (Section 10)" above
-  for exactly what to check and the two specific things most likely to
-  need a fix if something doesn't come up clean.
+  proxying). All five services (Section 8 + Section 10's `prometheus`/
+  `grafana`) now verified working together end to end on that machine.
