@@ -57,6 +57,13 @@ monitoring/
 # the service or (later) the image") - large, and irrelevant at runtime.
 notebooks/
 
+# The 9 raw Olist CSVs (~124MB, DVC-tracked - see README's "Data &
+# artifact versioning"). Notebooks 01-06 read these to produce the
+# artifacts this image actually needs (models/*.pkl); nothing under
+# src/ or app/ reads data/raw/ itself, so baking it into the image would
+# just be 124MB of dead weight - same reasoning as notebooks/ above.
+data/raw/
+
 # Test suite / tooling output - requirements-dev.txt only, never
 # installed in the image, so these would be dead weight anyway.
 tests/

@@ -122,7 +122,10 @@ wired into the running service end to end — not just present as a file.
 - [x] 3. Logging & error handling
 - [x] 4. Data versioning (DVC) & validation (Great Expectations) —
       `models/final_model.pkl` DVC-tracked against a local remote,
-      verified with a real add/push/delete/pull round trip (md5-identical)
+      verified with a real add/push/delete/pull round trip (md5-identical);
+      `data/raw/` (the 9 source Olist CSVs) DVC-tracked the same way,
+      added after the fact once its absence from the repo was caught —
+      see "Data & artifact versioning" for the honest timeline
 - [x] 5. Experiment tracking & model registry (MLflow)
 - [x] 6. Testing (pytest) — 94 tests at the time (unit / data / model /
       integration); 113 as of Section 10 (+ `tests/monitoring`); 115 once
@@ -165,7 +168,16 @@ olist_mlops_task3_phase1/
 │                        business logic lives in src/inference/pipeline.py
 ├── config/
 │   └── config.yaml      every path, MLflow setting, host/port, log setting
-├── data/                 lightweight reference data (sample payloads)
+├── data/
+│   └── raw/               the 9 raw Olist CSVs (customers, orders, order
+│                           items, payments, reviews, products, sellers,
+│                           geolocation, category translation) — ~124MB
+│                           combined, DVC-tracked as one unit (data/raw.dvc)
+│                           exactly like models/final_model.pkl below —
+│                           gitignored, restored with `dvc pull`. What
+│                           Notebooks 01-06 actually read to start from;
+│                           never read by the running service or the image
+│                           (.dockerignore excludes it, same as notebooks/)
 ├── models/               real fitted artifacts from Notebooks 05/06:
 │                         encoder.pkl, scaler.pkl, imputer.pkl,
 │                         feature_list.json — small, committed to git
@@ -291,13 +303,29 @@ exactly — see the comment at the top of the file.
 ## Data & artifact versioning (DVC)
 
 Section 4: "version the data and artifacts with DVC, so any result can be
-traced back to its source." Only `models/final_model.pkl` (95MB) is DVC-
-tracked — `encoder.pkl`/`scaler.pkl`/`imputer.pkl` are ~1KB each and
-`feature_list.json` is plain text, all four committed to git directly like
-any other source file. DVC exists to keep a large binary out of git's own
-history while still giving it a content-hashed, verifiable pointer; running
-it on files this small would add overhead (a `.dvc` file, a cache entry, a
-gitignore line) with no actual benefit — git already handles a few KB fine.
+traced back to its source." Two things are DVC-tracked: `models/final_model.pkl`
+(95MB, the trained model) and `data/raw/` (~124MB, the 9 raw Olist CSVs
+Notebooks 01-06 actually started from) — `encoder.pkl`/`scaler.pkl`/`imputer.pkl`
+are ~1KB each and `feature_list.json` is plain text, all four committed to
+git directly like any other source file. DVC exists to keep a large binary
+out of git's own history while still giving it a content-hashed, verifiable
+pointer; running it on files this small would add overhead (a `.dvc` file,
+a cache entry, a gitignore line) with no actual benefit — git already
+handles a few KB fine.
+
+**Raw data was added after the fact, not during the original Section 4
+pass** — worth saying plainly rather than rewriting history: the initial
+setup below only ever `dvc add`-ed the model, and the 9 raw CSVs sat
+outside the repo (and outside any versioning) until this was caught and
+fixed. Same remote, same mechanism, added as its own `dvc add data/raw` +
+`dvc push` on top of the already-initialized repo — the two-file addition
+this README ships alongside is just `data/raw.dvc` (the pointer: one md5 +
+size per file inside `data/raw/`) and `data/.gitignore`, both DVC-generated,
+never hand-written. If you're setting this repo up for the first time from
+this point forward, both `models/final_model.pkl` and `data/raw/` are
+already `.dvc`-tracked in git history — a plain `dvc pull` (see "Fresh
+clone" below) restores both, no special-casing needed for the raw data
+having joined later.
 
 **First-time setup** (already done once for this repo — skip to "Fresh
 clone" below unless you're re-doing this from scratch):
@@ -349,18 +377,22 @@ requires (see the size discussion above); everything before it (the
 working copy vs. DVC's local cache) costs nothing extra thanks to the
 hardlink config.
 
-**Fresh clone** (a new machine, or `models/final_model.pkl` missing after
-`git clone` — expected, since it's gitignored and DVC-managed now):
+**Fresh clone** (a new machine, or `models/final_model.pkl` / `data/raw/`
+missing after `git clone` — expected, since both are gitignored and
+DVC-managed now):
 
 ```bash
 dvc pull
 ```
 
-Pulls the real file back from the remote, byte-identical (verified via the
-md5 in the `.dvc` pointer) — required before `python -m src.training.log_model`
-(needs the file to log) or `docker compose up --build` (the Dockerfile
-`COPY`s the current directory into the image — an image built without the
-real file first pulled would ship without a model at all).
+One command restores both, byte-identical (verified via the md5 in each
+`.dvc` pointer) — `models/final_model.pkl` is required before `python -m
+src.training.log_model` (needs the file to log) or `docker compose up
+--build` (the Dockerfile `COPY`s the current directory into the image — an
+image built without the real file first pulled would ship without a model
+at all); `data/raw/` is not needed for either of those — nothing under
+`src/` or `app/` reads it — it exists so Notebooks 01-06 stay reproducible
+from a fresh clone, not so the service can start.
 
 **Why hardlink, and why it can matter on Windows specifically:** DVC's
 default cache mode is a plain copy — fine on Linux/Mac, but doubles disk
