@@ -1,13 +1,19 @@
 # Section 8: one command brings up the whole stack on a fresh clone -
 # `docker compose up --build` - matching Task 3's own definition of done
-# ("clone the repo, start everything with one command"). Three services:
+# ("clone the repo, start everything with one command"). Five services:
 #
-#   mlflow    the tracking/registry server (Dockerfile.mlflow) - artifacts
-#             live in the mlflow_data volume, not on the host laptop.
-#   register  runs once, registers a model against that server if none
-#             exists yet (scripts/register_if_needed.py), then exits.
-#   api       the FastAPI service, only starts once mlflow is healthy AND
-#             register has finished successfully.
+#   mlflow      the tracking/registry server (Dockerfile.mlflow) - artifacts
+#               live in the mlflow_data volume, not on the host laptop.
+#   register    runs once, registers a model against that server if none
+#               exists yet (scripts/register_if_needed.py), then exits.
+#   api         the FastAPI service, only starts once mlflow is healthy AND
+#               register has finished successfully.
+#   prometheus  Section 10: scrapes api's own /metrics every 10s
+#               (monitoring/prometheus/prometheus.yml) and evaluates
+#               monitoring/prometheus/alerts.yml against it.
+#   grafana     Section 10: a dashboard on top of prometheus's data,
+#               provisioned automatically (monitoring/grafana/) - no
+#               manual "add a datasource" click needed on first boot.
 #
 # Local (non-Docker) development is untouched: MLFLOW_TRACKING_URI is only
 # set here, inside the containers - config.yaml's local
@@ -20,7 +26,8 @@
 # environment-driven rather than hardcoded here - Section 8's "use
 # environment variables for secrets and connection strings" - while the
 # `:-http://mlflow:5000` default means `docker compose up --build` still
-# works with zero setup and no `.env` file at all.
+# works with zero setup and no `.env` file at all. The same pattern
+# extends to Grafana's admin login below.
 
 services:
   mlflow:
@@ -64,6 +71,38 @@ services:
       - api_logs:/app/logs
     restart: unless-stopped
 
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.2.2
+    ports:
+      - "3000:3000"
+    environment:
+      # Zero-setup default, same pattern as MLFLOW_TRACKING_URI above -
+      # override via .env for anything beyond local/training use (see
+      # README's "Monitoring" section).
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   mlflow_data:
   api_logs:
+  prometheus_data:
+  grafana_data:

@@ -41,8 +41,17 @@ mlruns/
 mlartifacts/
 
 # Runtime logs - written fresh inside the container (api_logs volume);
-# don't ship whatever happens to be in logs/ on the host.
+# don't ship whatever happens to be in logs/ on the host. predictions.db
+# (Section 10) is the same kind of generated-at-runtime file.
 logs/*.log
+logs/*.db
+
+# Section 10: Prometheus/Grafana configs. Read by the `prometheus`/
+# `grafana` containers directly via docker-compose.yml's own volume
+# mounts, straight from the repo checkout - never by this image
+# (api/register), so they'd just be dead weight here. Keeps "image
+# صغير" (Section 8) true for the one thing Section 10 adds.
+monitoring/
 
 # Never executed by the service or the image (README: "never executed by
 # the service or (later) the image") - large, and irrelevant at runtime.

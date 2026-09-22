@@ -1,0 +1,82 @@
+# Section 10, bullet 4: "decide what you want to alert on, and write it
+# down." These three rules, and why each threshold is what it is - not
+# generic defaults copied from a tutorial:
+#
+# HighErrorRate - >5% of requests returning 5xx over 5 minutes. 5% is a
+#   standard SRE floor: below it, isolated failures; above it, something
+#   is actually broken (a bad deploy, the model failing to load, Great
+#   Expectations misconfigured). http_requests_total{status="5xx"} is
+#   app/main.py's Instrumentator metric - confirmed by actually running
+#   the app and reading its real /metrics output, not assumed from docs.
+#
+# HighLatency - p95 request latency above 500ms for 5 minutes. This
+#   model is a 100-tree RandomForest on 42 features - real measured
+#   latency in this project is single-digit milliseconds end to end
+#   (validate -> features -> preprocess -> predict). 500ms is
+#   deliberately generous (~50-100x real observed latency), not a tight
+#   SLO: it exists to catch something being GENUINELY wrong (resource
+#   contention, a stuck dependency) without paging on ordinary jitter.
+#   Tighten it after watching real production p95 for a while -
+#   http_request_duration_highr_seconds_bucket (Instrumentator's
+#   high-resolution histogram, no per-handler labels) is built for
+#   exactly this kind of percentile alerting.
+#
+# PredictionDriftDetected - olist_prediction_drift_status == 1, i.e. the
+#   rolling predicted-delay rate has left the [1%, 20%] band around the
+#   real ~6.6% baseline (config.yaml's monitoring block,
+#   src/monitoring/drift.py). Both directions matter for a different
+#   reason: drifting UP means the model is flagging far more orders as
+#   delayed than training data suggests (a real shift in order patterns,
+#   or the model over-firing); drifting DOWN toward the low bound means
+#   the model is flagging almost NOTHING as delayed - given this model's
+#   own documented recall_delayed is already only 8% (README "Model
+#   provenance"), a further collapse toward 0% is a strong signal
+#   something broke (wrong feature encoding, a corrupted model version),
+#   not that deliveries genuinely got that much better overnight. `for:
+#   10m` (longer than the other two) because this needs
+#   drift_min_sample_size (30) fresh predictions behind it before the
+#   underlying olist_prediction_drift_status gauge even leaves
+#   insufficient_data (-1) - a short `for:` here would just flap.
+#
+# What this does NOT include: no Alertmanager, no Slack/email routing -
+# there is no real notification channel to wire this project to. These
+# rules fire and show up as "firing" in Prometheus's own Alerts page
+# (http://localhost:9090/alerts), which is the honest, correct scope for
+# "decide what to alert on and write it down" without inventing
+# infrastructure this project doesn't actually have.
+
+groups:
+  - name: olist-api-alerts
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status="5xx"}[5m]))
+          /
+          sum(rate(http_requests_total[5m]))
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "5xx error rate above 5% for the last 5 minutes"
+          description: "{{ $value | humanizePercentage }} of requests are failing with 5xx."
+
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(http_request_duration_highr_seconds_bucket[5m])) by (le))
+          > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 request latency above 500ms for the last 5 minutes"
+          description: "p95 latency is {{ $value | humanizeDuration }}, well above this model's normal single-digit-millisecond inference time."
+
+      - alert: PredictionDriftDetected
+        expr: olist_prediction_drift_status == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Predicted-delay rate has drifted outside the expected 1%-20% band"
+          description: "See GET /monitoring/summary or the Grafana dashboard for the current rate vs. the ~6.6% training baseline."

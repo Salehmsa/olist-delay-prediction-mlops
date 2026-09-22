@@ -4,8 +4,10 @@ MLOps Training 2026/2027 · Task 3 · Qafza Training
 
 Turns the model trained in `notebooks/01`–`06` into a real inference
 service: a Python package, a FastAPI app, data versioning, experiment
-tracking, tests, containers, and a CI/CD pipeline — monitoring is the one
-section still to land.
+tracking, tests, containers, a CI/CD pipeline, and monitoring
+(Prometheus + Grafana) — every section of the task is now built end to
+end (see "Project status" for what's independently verified vs. still
+pending a real `docker compose up` on your own machine).
 
 Training happens only in the notebooks. This service loads the fitted
 objects Notebooks 05 & 06 saved (imputer, encoder, scaler, model) and never
@@ -59,7 +61,9 @@ wired into the running service end to end — not just present as a file.
       `models/final_model.pkl` DVC-tracked against a local remote,
       verified with a real add/push/delete/pull round trip (md5-identical)
 - [x] 5. Experiment tracking & model registry (MLflow)
-- [x] 6. Testing (pytest) — 94 tests, unit / data / model / integration
+- [x] 6. Testing (pytest) — 94 tests at the time (unit / data / model /
+      integration); 113 as of Section 10 (+ `tests/monitoring`) — see
+      "Testing" below for the current count
 - [x] 7. API (`/predict`, `/predict/batch`)
 - [x] 8. Docker & Docker Compose — verified with a real Docker daemon,
       real model, `/predict/batch` tested live through the containers;
@@ -70,7 +74,19 @@ wired into the running service end to end — not just present as a file.
       on the first push to `main` — `test` green (1m31s), `build-and-push`
       green (1m43s) right after it, image published to GHCR; pre-commit
       hooks installed and active locally too
-- [ ] 10. Monitoring
+- [ ] 10. Monitoring — code and config complete, and verified as far as
+      this sandbox allows: `promtool check config`/`check rules` both
+      pass, `docker compose config` validates the 5-service file, and the
+      full pytest suite (113 tests, including live `/metrics` and
+      `/monitoring/summary` calls) passes against it — re-confirmed in a
+      genuinely fresh Python 3.12 venv mirroring every CI step by hand,
+      not just re-run in the dev venv. **Not yet confirmed:** an actual
+      `docker compose up --build` with Prometheus scraping the API
+      container and Grafana rendering the dashboard — no Docker daemon is
+      available in this environment (see "Monitoring (Section 10)" below
+      for exactly what to check and report back). Checking this box is
+      waiting on that, the same bar Section 9 was held to before its own
+      GitHub Actions run confirmed it.
 
 ## Structure
 
@@ -112,12 +128,29 @@ olist_mlops_task3_phase1/
 │   ├── features/          feature engineering (review_missing)
 │   ├── inference/          input building, model registry resolution,
 │   │                       prediction, the run_pipeline() orchestrator
+│   ├── monitoring/          Section 10: prediction_log.py (SQLite log),
+│   │                        drift.py (positive-rate + PSI), metrics.py
+│   │                        (custom Prometheus metrics + DriftCollector)
 │   ├── schemas/            pydantic request/response contracts
 │   ├── training/           log_model.py — registers models/*.pkl into
 │   │                       MLflow; never called by the running service
 │   ├── utils/               config loader (env-overridable MLflow
 │   │                        tracking URI, Section 8), logger
 │   └── validation/          Great Expectations suite + validation wrapper
+├── monitoring/               Section 10: config for the prometheus/grafana
+│                              containers, read directly from this checkout
+│                              via docker-compose.yml's volume mounts —
+│                              never copied into the api/register image
+│                              (.dockerignore excludes it)
+│   ├── prometheus/
+│   │   ├── prometheus.yml   scrape config (targets api:8000 every 10s) +
+│   │   │                     rule_files pointing at alerts.yml
+│   │   └── alerts.yml       the 3 alert rules — see "Monitoring" below
+│   └── grafana/
+│       ├── provisioning/     datasource + dashboard-provider YAML, loaded
+│       │                     automatically on container start
+│       └── dashboards/
+│           └── olist_monitoring.json   the dashboard itself, 9 panels
 ├── tests/
 │   ├── conftest.py         shared fixtures + auto-bootstraps an MLflow
 │   │                       registration if none exists yet (fresh clone /
@@ -134,13 +167,17 @@ olist_mlops_task3_phase1/
 │   ├── unit/                preprocessing, feature engineering, utilities
 │   ├── data/                 schema, ranges, nulls, leakage checks
 │   ├── model/                 the model loads, predicts the right shape
-│   └── integration/           API routes + the pipeline, end to end
+│   ├── monitoring/             prediction_log.py + drift.py, each against
+│   │                           its own throwaway SQLite DB (13 tests)
+│   └── integration/           API routes + the pipeline, end to end —
+│                               including /metrics and /monitoring/summary
 ├── pytest.ini
 ├── requirements.txt         runtime dependencies, pinned
 ├── requirements-dev.txt     + test / lint / format tooling
 ├── Dockerfile               the API image — multi-stage, non-root, healthcheck
 ├── Dockerfile.mlflow        the mlflow tracking/registry server image
-├── docker-compose.yml       mlflow + register + api — one command, fresh clone
+├── docker-compose.yml       mlflow + register + api + prometheus + grafana —
+│                             one command, fresh clone
 ├── .github/
 │   └── workflows/
 │       └── ci.yml            Section 9: lint → format check → test, then
@@ -148,13 +185,19 @@ olist_mlops_task3_phase1/
 │                               "CI/CD (Section 9)" below
 ├── .pre-commit-config.yaml   the same lint/format checks, run locally
 │                               before a commit — `pre-commit install`
-├── .env.example             documents MLFLOW_TRACKING_URI + its safe default
+├── .env.example             documents MLFLOW_TRACKING_URI and Grafana's
+│                             admin user/password + their safe defaults
 │                             (Section 8: env vars for secrets/connection
-│                             strings) — copy to .env only to override it
-├── .gitignore                keeps .env, mlflow.db, mlruns/, caches, venvs
-│                             out of git — mirrors .dockerignore's reasoning
-│                             where it applies, different list where it doesn't
-└── .dockerignore
+│                             strings) — copy to .env only to override one
+├── .gitignore                keeps .env, mlflow.db, mlruns/, logs/*.db,
+│                             caches, venvs out of git — mirrors
+│                             .dockerignore's reasoning where it applies,
+│                             different list where it doesn't
+└── .dockerignore              also excludes monitoring/ from the image
+                                build context (Section 10) — those configs
+                                are read straight from this checkout by
+                                the prometheus/grafana containers, never
+                                needed inside api/register's own image
 ```
 
 ## Setup
@@ -257,26 +300,35 @@ it with an identical md5 — the round trip is real, not just configured.
 
 ## Configuration
 
-Every path, host/port, log setting, and MLflow setting lives in
-`config/config.yaml` and is loaded once via `src/utils/config_loader.py`.
-Nothing in `app/` or `src/` hardcodes a path or a parameter.
+Every path, host/port, log setting, MLflow setting, and monitoring
+parameter lives in `config/config.yaml` and is loaded once via
+`src/utils/config_loader.py`. Nothing in `app/` or `src/` hardcodes a path
+or a parameter. The `monitoring:` block (Section 10 — prediction-log path,
+drift window/thresholds) is documented in full in "Monitoring (Section 10)"
+below, alongside its own config file, not repeated here.
 
-**Secrets and connection strings (Section 8):** the one setting that
-legitimately differs by environment — where `api`/`register` reach
-MLflow — is never hardcoded in a committed file. `src/utils/config_loader.py`
-reads it from the `MLFLOW_TRACKING_URI` environment variable when set,
-falling back to `config.yaml`'s local default otherwise. Inside Docker,
-`docker-compose.yml` supplies that variable via `${MLFLOW_TRACKING_URI:-http://mlflow:5000}`
-— Compose-native substitution from a `.env` file in the project root, not
-a bare string in the compose file. `.env.example` documents the variable
-and its safe default; copy it to `.env` only if you need to override that
-default (e.g. pointing at an external MLflow server) — `.env` itself is
+**Secrets and connection strings (Section 8):** the settings that
+legitimately differ by environment — where `api`/`register` reach
+MLflow, and Grafana's admin login — are never hardcoded in a committed
+file. `src/utils/config_loader.py` reads the MLflow URI from the
+`MLFLOW_TRACKING_URI` environment variable when set, falling back to
+`config.yaml`'s local default otherwise; Grafana reads its own two
+variables directly (`docker-compose.yml`'s `environment:` block — it has
+no `config.yaml` of its own to fall back to). Inside Docker,
+`docker-compose.yml` supplies all three via
+`${MLFLOW_TRACKING_URI:-http://mlflow:5000}`,
+`${GRAFANA_ADMIN_USER:-admin}`, `${GRAFANA_ADMIN_PASSWORD:-admin}` —
+Compose-native substitution from a `.env` file in the project root, not a
+bare string in the compose file. `.env.example` documents all three
+variables and their safe defaults; copy it to `.env` only if you need to
+override one (e.g. pointing at an external MLflow server, or changing
+Grafana's login before exposing it beyond localhost) — `.env` itself is
 gitignored, so a real `.env` never reaches the repo. No `.env` file at all
 is the normal case: every default is baked into `docker-compose.yml`, so
 `docker compose up --build` still runs with zero setup on a clean
-machine. This project has no other secret (no DB password, no API key —
-MLflow's backend store is a local SQLite file, not a networked
-credential), so `MLFLOW_TRACKING_URI` is the only entry in `.env.example`.
+machine. This project has no other secret (no DB password beyond
+Grafana's own default login, no API key — MLflow's backend store is a
+local SQLite file, not a networked credential).
 
 ## Before you run anything: register a model in MLflow
 
@@ -361,25 +413,34 @@ current directory into the image — build it before `models/final_model.pkl`
 has been pulled and the image ships with no model file at all, since it's
 gitignored (DVC-managed) rather than committed.
 
-Verified end to end on a real Docker daemon: `docker compose up --build`
-brings up all three services from a clean volume, and `/predict/batch`
-returns real predictions from the real registered model
-(`olist_delay_classifier v1 (Production)`) served entirely from inside the
-containers — no local Python env involved.
+Verified end to end on a real Docker daemon (Section 8): `docker compose
+up --build` brings up the `mlflow` + `register` + `api` trio from a clean
+volume, and `/predict/batch` returns real predictions from the real
+registered model (`olist_delay_classifier v1 (Production)`) served
+entirely from inside the containers — no local Python env involved.
+`prometheus` and `grafana` (Section 10, added after that verification run)
+are config-validated the same rigorous way — `promtool check config`/
+`check rules` on their exact mounted files, `docker compose config` on the
+full 5-service file — but not yet brought up on a real Docker daemon; see
+"Monitoring (Section 10)" and "Project status" above for exactly what
+that leaves open.
 
 ```bash
 docker compose up --build
 ```
 
 One command, fresh clone, nothing installed locally except Docker itself
-— no local Python env, no manual `log_model.py` step. Three services come
-up in order:
+— no local Python env, no manual `log_model.py` step. Five services come
+up, `mlflow`/`register`/`api` in the strict dependency order Section 8
+already established, `prometheus`/`grafana` right after:
 
 | Service | What it does |
 |---|---|
 | `mlflow` | the tracking/registry server — `http://localhost:5000`, data in the `mlflow_data` Docker volume |
 | `register` | runs once: registers the model (real metrics) against `mlflow` if none exists yet, then exits |
 | `api` | the FastAPI service — `http://localhost:8000`, only starts once `mlflow` is healthy and `register` has exited `0` |
+| `prometheus` | scrapes `api`'s `/metrics` every 10s — `http://localhost:9090` |
+| `grafana` | dashboards on top of `prometheus` — `http://localhost:3000` (default login `admin`/`admin`) |
 
 This is also Task 3's actual fix, not just a convenience: locally,
 `config.yaml`'s `mlflow.tracking_uri` is a `sqlite:///mlflow.db` file next
@@ -398,11 +459,11 @@ Re-running `docker compose up` later (a restart, or `up` again after
 `scripts/register_if_needed.py` checks first and skips if
 `mlflow_data` already has one, the same bootstrap-only-if-missing pattern
 `tests/conftest.py` uses locally (Section 6). To force a clean slate:
-`docker compose down -v` (the `-v` also drops `mlflow_data` and
-`api_logs`) — **required** any time `Dockerfile.mlflow`'s server flags
-change, since an experiment already registered under old flags keeps its
-old `artifact_location` in the volume regardless of what the image now
-starts with.
+`docker compose down -v` (the `-v` also drops `mlflow_data`, `api_logs`,
+and Section 10's `prometheus_data`/`grafana_data`) — **required** any
+time `Dockerfile.mlflow`'s server flags change, since an experiment
+already registered under old flags keeps its old `artifact_location` in
+the volume regardless of what the image now starts with.
 
 Two things worth knowing if you ever rebuild this from scratch on a new
 machine, since both cost real debugging time the first time around:
@@ -428,10 +489,11 @@ pip install -r requirements-dev.txt   # pytest, pytest-cov, httpx, ruff, black
 pytest
 ```
 
-94 tests across `tests/unit`, `tests/data`, `tests/model`, and
-`tests/integration` — one command, no separate server or fixtures to set up
-by hand (`tests/conftest.py` registers a model in MLflow automatically if
-this is a completely fresh clone). For coverage:
+113 tests across `tests/unit`, `tests/data`, `tests/model`,
+`tests/monitoring`, and `tests/integration` — one command, no separate
+server or fixtures to set up by hand (`tests/conftest.py` registers a
+model in MLflow automatically if this is a completely fresh clone). For
+coverage:
 
 ```bash
 pytest --cov=src --cov=app --cov-report=term-missing
@@ -452,7 +514,7 @@ passes:
 
 | Job | Runs on | Steps | When |
 |---|---|---|---|
-| `test` | every push and PR against `main` | ruff → `black --check` → pytest (94 tests) | always |
+| `test` | every push and PR against `main` | ruff → `black --check` → pytest (113 tests) | always |
 | `build-and-push` | `needs: test` | build the API image, push to GHCR as `:latest` and `:<commit sha>` | only a real push to `main`, never a PR |
 
 "A failed test must stop the pipeline" is true here for free, not through
@@ -555,6 +617,252 @@ first, `build-and-push` right after it (only for a push to `main`, not a
 PR), and the new image should then show up under **Packages** (the repo's
 sidebar, or your GitHub profile's Packages tab).
 
+## Monitoring (Section 10)
+
+Section 10's task text: expose service metrics (request count, latency,
+error rate); track the distribution of predictions over time and watch
+for drift; store prediction logs so they can be evaluated later once the
+real delivery date arrives; decide what to alert on, and write it down.
+
+> 10. المراقبة (Monitoring)
+> اعرض metrics للخدمة: عدد الطلبات، الزمن، ونسبة الأخطاء. تتبع توزيع
+> التوقعات مع الوقت، وراقب الـ drift. خزن سجلات التوقعات حتى تقدر تقيمها
+> لاحقا لما يوصل تاريخ التوصيل الحقيقي. قرر شو بدك تعمل عليه تنبيه، واكتبه.
+
+Two ways to satisfy "expose metrics" were on the table: a lean
+`/metrics`-only endpoint, or a real Prometheus + Grafana stack behind it.
+Went with the latter — `prometheus` and `grafana` in `docker-compose.yml`
+("Run with Docker" above), both provisioned automatically on first boot,
+no manual "add a datasource" click.
+
+### Service metrics (bullet 1)
+
+`GET /metrics` (Prometheus text format) exposes two layers from one
+endpoint — confirmed against **live** output from a running instance,
+not copied from a library's docs:
+
+| Metric | Source | What it is |
+|---|---|---|
+| `http_requests_total{handler,method,status}` | `prometheus-fastapi-instrumentator` (`app/main.py`) | request count, by route and status **class** — Prometheus groups `status="2xx"`/`"4xx"`/`"5xx"`, not exact codes |
+| `http_request_duration_highr_seconds_bucket` | same | fine-grained latency histogram built for `histogram_quantile()` — what `alerts.yml`'s `HighLatency` rule reads |
+| `olist_predictions_total{predicted_class}` | `src/monitoring/metrics.py` | predictions made, by predicted class (`0`/`1`) — "request count" read as outcomes, not raw HTTP traffic |
+| `olist_prediction_latency_seconds` | same | the **model pipeline's own** latency (validate → features → preprocess → predict) — isolated from the FastAPI/Starlette overhead the HTTP histogram above also includes |
+| `olist_prediction_positive_rate` / `olist_prediction_drift_status` | same, see bullet 2 | drift signals, as gauges — see below |
+
+`/metrics` itself is excluded from its own request-count metrics
+(`excluded_handlers=["/metrics"]`) so Prometheus scraping it every 10s
+doesn't show up as "traffic" in its own numbers. Error rate isn't a
+separate tracked number — it's `http_requests_total{status="5xx"} /
+http_requests_total`, a ratio over the two counters above, computed in
+PromQL by `alerts.yml`'s `HighErrorRate` rule and Grafana's panels.
+
+`GET /monitoring/summary` gives the same underlying data as plain JSON,
+for a human or `curl` rather than Prometheus — real captured output
+below, from three requests through `/predict` in this checkout (`status`
+is `"insufficient_data"` below `drift_min_sample_size` — see bullet 2):
+
+```bash
+curl http://localhost:8000/monitoring/summary
+```
+```json
+{
+  "predictions_logged_total": 16,
+  "drift": {
+    "status": "insufficient_data",
+    "reason": "only 16 prediction(s) logged so far, need at least 30 before a drift verdict is meaningful",
+    "predictions_logged_total": 16,
+    "baseline_positive_rate": 0.066
+  }
+}
+```
+
+Past `drift_min_sample_size` predictions the shape gains `window_size`,
+`current_positive_rate`, `drift_bounds: {low, high}`, and
+`psi_probability_drift` (`null` with an explanatory `psi_note` until a
+full second window of history exists — see bullet 2).
+
+### Prediction distribution & drift (bullet 2)
+
+`src/monitoring/drift.py`'s `compute_drift_report()` is the single
+function everything else reads from — the Prometheus `DriftCollector`
+and `/monitoring/summary` both call it directly, so the two can never
+disagree. Two independent signals:
+
+1. **Positive-rate drift** — the rolling share of the last
+   `drift_window_size` (200) predictions flagging `is_delayed=1`,
+   compared against `config.yaml`'s `baseline_positive_rate` (0.066 —
+   Notebook 06's real held-out-test positive rate, the same number in
+   "Model provenance" above). Outside `[1%, 20%]` → `drift_detected`.
+   This is the signal `alerts.yml`'s `PredictionDriftDetected` rule
+   actually fires on.
+2. **PSI (Population Stability Index)** on predicted probabilities — a
+   more sensitive secondary signal: the current window's score
+   distribution (10 equal-width bins over `[0, 1]`) against a
+   **reference window drawn from this service's own earlier
+   predictions** (the 200 rows immediately before the current ones).
+   Deliberately *not* compared against Notebook 06's actual training
+   scores: this service only ever received `KNOWN_METRICS`' summary
+   numbers, never the raw training prediction array, and reaching back
+   into notebook internals for one would cross the same "no training
+   inside the inference pipeline" line Section 5 already drew. A
+   self-referential reference window is a real, commonly used pattern
+   for exactly this gap, and still catches what matters most in
+   production — today's traffic looking different from last week's.
+   Exposed for diagnosis (Grafana, `/monitoring/summary`) but
+   deliberately **not** wired to its own alert — see "Alerting" below
+   for why.
+
+Below `drift_min_sample_size` (30) logged predictions, both signals
+report `"insufficient_data"` rather than a false `ok`/`drift_detected`
+verdict on too little evidence — expected and correct behavior against a
+freshly started container, not a bug.
+
+`DriftCollector` (`src/monitoring/metrics.py`) is a **custom** Prometheus
+collector, not a `Gauge.set()` — these two values are derived from a
+SQLite query, not incremented inline per request, so a plain Gauge would
+just sit at whatever it was last set to. A custom collector recomputes
+both fresh on every single `/metrics` scrape (confirmed live: with
+`status="insufficient_data"`, `olist_prediction_drift_status` reads
+exactly `-1.0` and `olist_prediction_positive_rate` is correctly absent
+from the scrape entirely, matching the 0/1/-1 contract in the code's own
+docstring), so the drift verdict Grafana shows is never staler than
+Prometheus's own 10-second scrape interval
+(`monitoring/prometheus/prometheus.yml`) — the textbook-correct pattern
+for a metric backed by external state rather than an inline counter.
+
+### Prediction logging (bullet 3)
+
+Every **successful** prediction — through `/predict` or `/predict/batch`,
+never a request that failed schema or Great-Expectations validation,
+since that was never actually predicted on — is written to
+`logs/predictions.db` (SQLite, `src/monitoring/prediction_log.py`),
+inside the same `api_logs` Docker volume `logs/app.log` already uses, so
+it persists across restarts with no new volume or service:
+
+```sql
+CREATE TABLE predictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_utc TEXT NOT NULL,
+    order_id TEXT,               -- nullable, see below
+    source TEXT NOT NULL,        -- "predict" | "predict_batch"
+    prediction INTEGER NOT NULL,
+    probability REAL NOT NULL,
+    model_version TEXT NOT NULL,
+    latency_ms REAL NOT NULL
+);
+```
+
+`OrderRequest` gained one new optional field for this: `order_id` — not
+used by the model (`input_builder.py` ignores it, same as
+`review_missing`) — it exists solely so a logged row can later be joined
+back to a real Olist order. A caller that omits it still gets a logged,
+drift-countable row, just one that can never be joined back to a specific
+order later.
+
+**Honest scope note:** this bullet asks for logs "so you can evaluate
+them later once the real delivery date arrives." This service stores
+exactly what that evaluation would need — the prediction, the
+probability, the order id when given, a timestamp — but *running* that
+evaluation (joining `predictions.db` against a real delivered-date feed
+once one exists, and scoring accuracy on it) is a job for whichever
+system owns that downstream ground-truth data, not something this
+inference service does to itself. That's consistent with how this
+project has scoped "no training inside the inference pipeline"
+throughout, not a gap specific to this bullet.
+
+### Alerting
+
+Three rules, `monitoring/prometheus/alerts.yml`, evaluated by Prometheus
+itself every 10s (full reasoning in that file's own header comment —
+this is the README mirror):
+
+| Alert | Fires when | Why this threshold |
+|---|---|---|
+| `HighErrorRate` | 5xx rate > 5% over 5m | standard SRE floor — below it, isolated failures; above it, something's actually broken (bad deploy, model failed to load, Great Expectations misconfigured) |
+| `HighLatency` | p95 latency > 500ms over 5m | real measured pipeline latency here is single-digit milliseconds (a 100-tree RandomForest on 42 features) — 500ms is deliberately ~50–100x that, generous enough to only catch something genuinely wrong (resource contention, a stuck dependency), not ordinary jitter |
+| `PredictionDriftDetected` | `olist_prediction_drift_status == 1` for 10m | the positive-rate signal (bullet 2) leaving `[1%, 20%]`. Both directions matter: drifting up means far more orders flagged delayed than training data suggests; drifting down toward 0% is the more dangerous case given this model's own `recall_delayed` is already only 8% (see "Model provenance") — a further collapse reads as something broken, not deliveries genuinely improving overnight. `for: 10m` (longer than the other two) because the underlying gauge needs `drift_min_sample_size` (30) fresh predictions before it can leave `insufficient_data` at all — a shorter window would just flap |
+
+PSI is deliberately **not** its own alert rule — it's a more sensitive,
+more diagnostic signal (Grafana, `/monitoring/summary`), but its
+self-referential reference window (bullet 2 above) makes it better
+suited to a human glancing at a trend than a page-worthy threshold; the
+positive-rate rule above is the one anchored to a number this project can
+actually defend (Notebook 06's real baseline).
+
+**What this does *not* include, on purpose:** no Alertmanager, no
+Slack/email/PagerDuty routing — there's no real notification channel to
+wire a training project to, and inventing one would be less honest than
+leaving it out. These rules fire and show as **firing** on Prometheus's
+own Alerts page (`http://localhost:9090/alerts`) — the correctly scoped
+answer to "decide what to alert on and write it down" without pretending
+to infrastructure this project doesn't actually have.
+
+### Seeing it live
+
+```bash
+docker compose up --build
+```
+
+| What | Where |
+|---|---|
+| Raw metrics | `http://localhost:8000/metrics` |
+| Human-readable summary | `http://localhost:8000/monitoring/summary` |
+| Prometheus — scrape health | `http://localhost:9090/targets` (`olist-api` should read `UP`) |
+| Prometheus — alert state | `http://localhost:9090/alerts` |
+| Grafana dashboard | `http://localhost:3000` (login `admin` / `admin` by default — "Configuration" above) |
+
+The dashboard (`monitoring/grafana/dashboards/olist_monitoring.json`,
+provisioned automatically — no manual datasource step) has 9 panels:
+predictions logged, current predicted-delay rate, drift status, and p95
+latency as headline numbers; request rate by status, latency percentiles,
+predictions-by-class rate, model-pipeline latency, and predicted-delay
+rate against the 0.066 / 0.01 / 0.20 reference lines as time series. A
+handful of real requests against `/predict` (or `/docs`'s "Try it out")
+is enough to see it move — drift's own panels need
+`drift_min_sample_size` (30) logged predictions before they leave
+"insufficient data".
+
+### What's verified, and what isn't
+
+Validated here with the same rigor as every other section — real tools,
+not assumptions: `promtool check config` and `promtool check rules` both
+pass clean on the exact files Docker mounts; `docker compose config`
+fully resolves the 5-service file (env substitution, volumes,
+`depends_on`); every metric name and label above was confirmed against
+**live** `/metrics` output from a running instance, including the
+`status="2xx"`/`"4xx"` grouping and the `-1.0` drift-status value with no
+`positive_rate` sample while `insufficient_data`; the full test suite
+(113 tests) passes, including `TestClient` calls that hit `/metrics` and
+`/monitoring/summary` for real; and the new dependency
+(`prometheus-fastapi-instrumentator`) installs and resolves cleanly in a
+genuinely fresh Python 3.12 virtualenv running every `ci.yml` step by
+hand in order (`pip install -r requirements-dev.txt` → `pip check` →
+`ruff check .` → `black --check .` → the CI dummy model → `pytest -v`,
+113 passed), not just re-tested in an already-set-up environment.
+
+**Not verified here, honestly:** an actual `docker compose up --build`
+with Prometheus really scraping the `api` container and Grafana really
+rendering the dashboard — this sandbox has no Docker daemon (Section 8's
+own Docker verification needed a second machine for the same reason; see
+"Known open items" below). Please run it and check the URLs above; if
+anything looks off, it's almost certainly one of these two things, both
+flagged here rather than silently assumed correct:
+
+- `prom/prometheus:v3.14.0` and `grafana/grafana:13.2.2` — both confirmed
+  as real, current upstream releases (`git ls-remote --tags` against each
+  project's actual GitHub repo), but Docker Hub itself, where the image
+  is actually pulled from, was unreachable from this sandbox, so the
+  exact tag strings couldn't be pulled and double-checked directly. If
+  either image fails to pull, this naming is the first thing to check.
+- Prometheus's `/targets` page should show `olist-api` as `UP` within
+  ~10s of `api` becoming healthy. If it shows `DOWN`: `docker compose
+  logs prometheus`, and confirm `api:8000/metrics` is reachable from
+  inside that container — `docker compose exec prometheus wget -qO-
+  http://api:8000/metrics`.
+
+Once confirmed working, item 10 in "Project status" above gets checked
+the same way item 9 was — a real run, not just files that look right.
+
 ## Known open items
 
 Not blockers, just not resolved yet:
@@ -568,3 +876,9 @@ Not blockers, just not resolved yet:
   `docker compose up --build` run — see "Run with Docker" above for what
   that surfaced and fixed (import path, Host-header validation, artifact
   proxying). All three now verified working together end to end.
+- Section 10's `prometheus` and `grafana` services are config-validated
+  (`promtool`, `docker compose config`) but not yet confirmed on a real
+  Docker daemon the way the three services above were — see "What's
+  verified, and what isn't" at the end of "Monitoring (Section 10)" above
+  for exactly what to check and the two specific things most likely to
+  need a fix if something doesn't come up clean.

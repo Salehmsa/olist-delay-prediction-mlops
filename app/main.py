@@ -3,9 +3,13 @@ import time
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from src.inference.model_registry import MODEL_VERSION_INFO
 from src.inference.pipeline import MODEL_VERSION, run_pipeline
+from src.monitoring.drift import compute_drift_report
+from src.monitoring.metrics import register_drift_collector
+from src.monitoring.prediction_log import total_count
 from src.schemas.request_schema import BatchPredictionRequest, OrderRequest
 from src.schemas.response_schema import (
     BatchPredictionItem,
@@ -21,6 +25,20 @@ config = load_config()
 app = FastAPI(
     title=config["api"]["title"],
 )
+
+# Section 10, bullet 1: "expose metrics for the service - request count,
+# latency, error rate". Instrumentator gives the generic RED metrics for
+# every route for free (request count/latency/status, broken down by
+# path and method) at GET /metrics, in the standard Prometheus text
+# format - monitoring/prometheus/prometheus.yml scrapes it from there.
+# excluded_handlers keeps /metrics itself out of its own request-count
+# metrics (scraping /metrics every few seconds would otherwise show up
+# as "traffic" in its own numbers). The ML-specific metrics on top of
+# this (predictions by class, model-pipeline latency, drift) are
+# src/monitoring/metrics.py - registered onto the SAME registry
+# Instrumentator exposes here, so one /metrics endpoint serves all of it.
+Instrumentator(excluded_handlers=["/metrics"]).instrument(app).expose(app)
+register_drift_collector()
 
 
 @app.middleware("http")
@@ -142,6 +160,25 @@ def model_info():
     return MODEL_VERSION_INFO
 
 
+@app.get("/monitoring/summary")
+def monitoring_summary():
+    """
+    Section 10: a human-readable complement to /metrics - the same
+    underlying data (Prometheus's format is built for machines/Grafana,
+    not for opening in a browser or Swagger's "Try it out"), so "expose
+    metrics for the service" (bullet 1) has an answer either way you want
+    to look at it. drift/positive-rate figures here come straight from
+    src/monitoring/drift.compute_drift_report() - the exact same function
+    the /metrics DriftCollector calls, so this endpoint and Grafana's
+    dashboard can never disagree with each other.
+    """
+
+    return {
+        "predictions_logged_total": total_count(),
+        "drift": compute_drift_report(),
+    }
+
+
 @app.post("/predict", response_model=PredictionResponse)
 def predict_single(request: OrderRequest):
     """
@@ -156,7 +193,7 @@ def predict_single(request: OrderRequest):
     route does no error handling of its own on purpose.
     """
 
-    prediction, probability = run_pipeline(request)
+    prediction, probability = run_pipeline(request, source="predict")
 
     return PredictionResponse(
         prediction=int(prediction),
@@ -186,7 +223,7 @@ def predict_batch(request: BatchPredictionRequest):
 
     for index, order in enumerate(request.orders):
         try:
-            prediction, probability = run_pipeline(order)
+            prediction, probability = run_pipeline(order, source="predict_batch")
 
             results.append(
                 BatchPredictionItem(

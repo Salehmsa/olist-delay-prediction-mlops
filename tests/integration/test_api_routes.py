@@ -208,3 +208,105 @@ def test_predict_batch_over_the_size_cap_is_rejected(client, valid_order_kwargs)
     )
 
     assert response.status_code == 422
+
+
+# -----------------------------------------------------------------------------
+# Section 10: monitoring
+#
+# `client` is session-scoped (tests/conftest.py) and shared with every
+# /predict(/batch) test above, all of which also write to the SAME real
+# logs/predictions.db as a side effect (src/inference/pipeline.py). These
+# tests can never assert an exact predictions_logged_total or drift
+# status for that reason - only that logging actually happened (a
+# BEFORE/AFTER comparison around a call made inside the test itself) and
+# that the response shapes are correct. Exact-count behavior belongs to
+# tests/monitoring/test_prediction_log.py and test_drift.py instead,
+# which each use a fully isolated, empty database.
+# -----------------------------------------------------------------------------
+
+
+def test_monitoring_summary_shape(client):
+    response = client.get("/monitoring/summary")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) == {"predictions_logged_total", "drift"}
+    assert isinstance(body["predictions_logged_total"], int)
+    assert body["predictions_logged_total"] >= 0
+    assert body["drift"]["status"] in {"insufficient_data", "ok", "drift_detected"}
+
+
+def test_predict_increments_the_monitoring_summary_count(client, valid_order_kwargs):
+    before = client.get("/monitoring/summary").json()["predictions_logged_total"]
+
+    response = client.post("/predict", json=valid_order_kwargs)
+    assert response.status_code == 200
+
+    after = client.get("/monitoring/summary").json()["predictions_logged_total"]
+
+    assert after == before + 1
+
+
+def test_predict_batch_increments_the_monitoring_summary_count_per_order(
+    client, valid_order_kwargs
+):
+    before = client.get("/monitoring/summary").json()["predictions_logged_total"]
+
+    response = client.post(
+        "/predict/batch", json={"orders": [valid_order_kwargs, valid_order_kwargs]}
+    )
+    assert response.status_code == 200
+
+    after = client.get("/monitoring/summary").json()["predictions_logged_total"]
+
+    assert after == before + 2
+
+
+def test_a_request_that_fails_validation_is_not_logged_as_a_prediction(
+    client, valid_order_kwargs
+):
+    """
+    Only a SUCCESSFUL prediction is logged (src/inference/pipeline.py) -
+    a request that fails Great Expectations was never actually predicted
+    on, so it has no business inflating predictions_logged_total or
+    skewing the drift-rate denominator.
+    """
+
+    before = client.get("/monitoring/summary").json()["predictions_logged_total"]
+
+    valid_order_kwargs["total_payment"] = -50.0
+    response = client.post("/predict", json=valid_order_kwargs)
+    assert response.status_code == 400
+
+    after = client.get("/monitoring/summary").json()["predictions_logged_total"]
+
+    assert after == before
+
+
+def test_metrics_endpoint_exposes_prometheus_format(client):
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+
+    body = response.text
+    # The generic RED metrics from app/main.py's Instrumentator...
+    assert "http_requests_total" in body
+    assert "http_request_duration_highr_seconds_bucket" in body
+    # ...and the ML-specific ones from src/monitoring/metrics.py.
+    assert "olist_predictions_total" in body
+    assert "olist_prediction_latency_seconds" in body
+    assert "olist_prediction_positive_rate" in body
+    assert "olist_prediction_drift_status" in body
+
+
+def test_metrics_reflects_predictions_made_through_predict(client, valid_order_kwargs):
+    response = client.post("/predict", json=valid_order_kwargs)
+    predicted_class = str(response.json()["prediction"])
+
+    metrics_body = client.get("/metrics").text
+
+    assert (
+        f'olist_predictions_total{{predicted_class="{predicted_class}"}}'
+        in metrics_body
+    )

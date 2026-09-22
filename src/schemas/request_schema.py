@@ -44,6 +44,7 @@ CustomerState = Literal[
 # (Section 7: "check the automatic API docs and make sure the examples
 # work") and the test suite exercise literally the same values.
 _EXAMPLE_ORDER = {
+    "order_id": "e481f51cbdc54678b7cc49136f2d6af7",
     "customer_zip_code_prefix": 12345,
     "total_payment": 150.0,
     "avg_payment": 75.0,
@@ -78,6 +79,15 @@ class OrderRequest(BaseModel):
     """
 
     model_config = ConfigDict(json_schema_extra={"examples": [_EXAMPLE_ORDER]})
+
+    # Section 10, bullet 3: optional, and never used by the model itself
+    # (not in feature_list.json) - it exists only so src/monitoring/
+    # prediction_log.py can tag a logged prediction with something that
+    # matches a REAL Olist order, so it can be evaluated later once the
+    # real delivery date arrives. Omit it and logging still works - it
+    # just means that particular row can't be joined back to a real
+    # outcome afterward. See README's "Monitoring" section.
+    order_id: Optional[str] = None
 
     customer_zip_code_prefix: Optional[float] = None
     total_payment: Optional[float] = None

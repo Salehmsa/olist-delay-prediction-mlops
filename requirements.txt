@@ -37,3 +37,19 @@ great_expectations==1.23.1
 # register it, alias it "production", load it back via
 # models:/name@alias, download a run's artifacts.
 mlflow==3.16.1
+
+# Section 10: monitoring. app/main.py's Instrumentator().instrument(app)
+# .expose(app) is what creates GET /metrics — pulls in prometheus_client
+# as its own dependency, which src/monitoring/metrics.py also imports
+# directly for the ML-specific Counter/Histogram/custom Collector on top
+# of the generic HTTP metrics this package provides.
+#
+# Pinned to 7.1.0, NOT the newest release (8.0.0+) - 8.0.0 (see its
+# PyPI requires_dist) raised its own floor to starlette>=1.0.0, which is
+# flatly incompatible with fastapi==0.115.6's own starlette<0.42.0,>=0.40.0
+# pin above (verified directly: `pip install` of 8.1.0 alongside this
+# file's fastapi pin fails dependency resolution). 7.1.0 requires
+# starlette>=0.30.0,<1.0.0 instead - satisfiable together with fastapi's
+# pin, confirmed with a real `pip install` + `pip check` of this exact
+# file, both clean.
+prometheus-fastapi-instrumentator==7.1.0

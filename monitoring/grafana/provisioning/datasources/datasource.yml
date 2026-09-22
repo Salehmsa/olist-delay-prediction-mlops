@@ -1,0 +1,22 @@
+# Section 10: auto-provisions the Prometheus datasource on container
+# start - no manual "Add data source" click needed the first time Grafana
+# boots. `uid: prometheus` is a fixed, deliberately-chosen id (not
+# Grafana's own auto-generated one) so
+# monitoring/grafana/dashboards/olist_monitoring.json can reference it
+# directly and reliably (every panel's "datasource" field points at this
+# exact uid) instead of depending on dashboard-import machinery.
+#
+# url: http://prometheus:9090 - Docker Compose's own internal DNS, same
+# pattern as MLFLOW_TRACKING_URI resolving `mlflow` elsewhere in this
+# project (docker-compose.yml).
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

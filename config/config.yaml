@@ -44,3 +44,37 @@ logging:
   level: INFO
   log_dir: logs
   log_file: app.log
+
+# Section 10: monitoring. The service's own operational visibility -
+# metrics, prediction logging, drift detection - configured here like
+# everything else, not hardcoded in src/monitoring/.
+monitoring:
+  # Bullet 3 ("store prediction logs so you can evaluate them later once
+  # the real delivery date arrives"): SQLite, same reasoning as
+  # mlflow.db above - this needs to be QUERIED later (drift stats now, a
+  # real ground-truth join eventually), not just archived. Lives under
+  # logs/ on purpose: it rides the SAME api_logs Docker volume that
+  # already persists logs/app.log across container restarts - no new
+  # volume, no new service.
+  prediction_log_path: logs/predictions.db
+
+  # Bullet 2 ("track the distribution of predictions over time, watch
+  # for drift"): the reference point drift is measured against. 0.066 is
+  # not a guess - it's the real positive rate Notebook 06's held-out test
+  # set showed (957 delayed / 14472 total), the same number already
+  # documented in src/training/log_model.py's KNOWN_METRICS comment and
+  # README's "Model provenance" table.
+  baseline_positive_rate: 0.066
+  # How many of the most recent predictions the "current" window is.
+  drift_window_size: 200
+  # Below this many logged predictions, a drift verdict is noise, not
+  # signal - reported as "insufficient_data" instead of a false ok/alert.
+  drift_min_sample_size: 30
+
+  # Bullet 4 ("decide what to alert on, write it down"):
+  # monitoring/prometheus/alerts.yml's PredictionDriftDetected rule fires
+  # on these same two bounds - kept in sync by hand, since Prometheus
+  # can't read this file directly. Change one, change the other. See
+  # README's "Alerting" for the reasoning behind each number.
+  drift_high_threshold: 0.20 # >20% predicted-delayed
+  drift_low_threshold: 0.01 # <1% predicted-delayed

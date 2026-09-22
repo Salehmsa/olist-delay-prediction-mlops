@@ -5,6 +5,8 @@ from src.features.feature_engineering import create_features
 from src.inference.input_builder import build_input_dataframe
 from src.inference.model_registry import MODEL_VERSION_INFO
 from src.inference.predict import load_model, predict
+from src.monitoring.metrics import prediction_latency_seconds, predictions_total
+from src.monitoring.prediction_log import log_prediction
 from src.schemas.request_schema import OrderRequest
 from src.utils.logger import logger
 from src.validation.data_validation import validate_request_data
@@ -20,7 +22,7 @@ MODEL_VERSION = (
 )
 
 
-def run_pipeline(request: OrderRequest):
+def run_pipeline(request: OrderRequest, source: str = "predict"):
     """
     Single entry point: one OrderRequest in, (prediction, probability) out.
     Order mirrors what a real deployment should do, in the sequence Section
@@ -32,6 +34,14 @@ def run_pipeline(request: OrderRequest):
     Logs input, output, latency, and model version for every call
     (Section 3) here rather than in the API layer, so it covers /predict,
     /predict/batch, and any direct/CLI/test call alike.
+
+    Section 10: the same reasoning extends to prediction logging and
+    metrics - both happen here, once, after a SUCCESSFUL prediction only
+    (a request that fails validation was never actually predicted on, so
+    it has no business in predictions_total or the drift log). `source`
+    ("predict" vs "predict_batch") is the one thing the two callers in
+    app/main.py actually differ on, and it flows into prediction_log.py
+    purely for later debugging - it plays no part in any prediction.
     """
 
     start = time.perf_counter()
@@ -59,6 +69,18 @@ def run_pipeline(request: OrderRequest):
             result_probability,
             latency_ms,
             MODEL_VERSION,
+        )
+
+        predictions_total.labels(predicted_class=str(result_prediction)).inc()
+        prediction_latency_seconds.observe(latency_ms / 1000)
+
+        log_prediction(
+            order_id=getattr(request, "order_id", None),
+            source=source,
+            prediction=result_prediction,
+            probability=result_probability,
+            model_version=MODEL_VERSION,
+            latency_ms=latency_ms,
         )
 
         return result_prediction, result_probability

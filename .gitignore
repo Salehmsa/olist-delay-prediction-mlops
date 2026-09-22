@@ -40,8 +40,11 @@ mlflow.db
 mlruns/
 mlartifacts/
 
-# Runtime logs - written fresh wherever this runs.
+# Runtime logs - written fresh wherever this runs. predictions.db
+# (Section 10) is generated data too, same reasoning as mlflow.db above -
+# never committed, restored by nothing but this service running again.
 logs/*.log
+logs/*.db
 
 # Editors / OS
 .vscode/
