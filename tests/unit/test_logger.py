@@ -36,7 +36,9 @@ def test_logger_level_matches_config():
     from src.utils.config_loader import load_config
 
     config = load_config()
-    expected_level = getattr(logging, str(config["logging"]["level"]).upper(), logging.INFO)
+    expected_level = getattr(
+        logging, str(config["logging"]["level"]).upper(), logging.INFO
+    )
 
     logger = setup_logger()
 

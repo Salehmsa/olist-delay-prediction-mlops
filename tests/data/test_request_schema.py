@@ -31,7 +31,9 @@ def test_all_numeric_fields_are_optional():
 
 
 @pytest.mark.parametrize("bad_status", ["shipped", "invoiced", "", "DELIVERED"])
-def test_order_status_outside_the_trained_categories_is_rejected(valid_order_kwargs, bad_status):
+def test_order_status_outside_the_trained_categories_is_rejected(
+    valid_order_kwargs, bad_status
+):
     valid_order_kwargs["order_status"] = bad_status
 
     with pytest.raises(ValidationError):
@@ -39,7 +41,9 @@ def test_order_status_outside_the_trained_categories_is_rejected(valid_order_kwa
 
 
 @pytest.mark.parametrize("bad_state", ["ZZ", "sp", "California", ""])
-def test_customer_state_outside_the_27_trained_states_is_rejected(valid_order_kwargs, bad_state):
+def test_customer_state_outside_the_27_trained_states_is_rejected(
+    valid_order_kwargs, bad_state
+):
     valid_order_kwargs["customer_state"] = bad_state
 
     with pytest.raises(ValidationError):

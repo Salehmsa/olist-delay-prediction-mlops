@@ -1,0 +1,68 @@
+# Section 9: "pre-commit hooks" — runs the exact same checks locally, before
+# a commit is even made, that .github/workflows/ci.yml's `test` job runs on
+# GitHub. That's deliberate: a commit that would fail CI should fail on your
+# own machine first, not after a push.
+#
+# Three repos, in the order they run:
+#
+#   1. pre-commit-hooks   generic file hygiene (whitespace, EOF newlines,
+#                          valid YAML, merge-conflict markers left behind).
+#                          check-added-large-files is here on purpose: it's
+#                          the automated version of the exact mistake this
+#                          project already hit once (Section 4) — a large
+#                          binary file getting `git add`-ed by hand before
+#                          `dvc add` got to it. Default threshold is 500KB;
+#                          every file this repo actually commits to git
+#                          (encoder/scaler/imputer, feature_list.json, the
+#                          ~26KB CI dummy model) is well under that, and the
+#                          real 95MB models/final_model.pkl should never be
+#                          `git add`-able at all — it's DVC-tracked and
+#                          listed in models/.gitignore.
+#   2. ruff-pre-commit    lint, with --fix so simple issues (unused imports,
+#                          import order, ...) are corrected automatically
+#                          instead of just reported. Same ruff version
+#                          (0.8.4) as requirements-dev.txt / ci.yml, so a
+#                          local pass means the CI lint step passes too.
+#   3. black-pre-commit-mirror   format. The official black hooks repo
+#                          (psf/black) recommends this mirror in its own
+#                          manifest — same tool, ~2x faster hook install.
+#                          Same black version (24.10.0) as
+#                          requirements-dev.txt / ci.yml, for the same
+#                          reason as ruff above. Deliberately NOT using
+#                          ruff-format here — this project already pinned
+#                          black as its one formatter (Section 9's own
+#                          "format" step is `black --check .`), and running
+#                          two different formatters against the same files
+#                          would just fight each other.
+#
+# One-time setup (from the project root, inside the activated environment —
+# pre-commit itself is already in requirements-dev.txt):
+#
+#     pre-commit install
+#
+# After that, every `git commit` runs these automatically. To run them
+# on demand against the whole repo (e.g. right after installing, or before
+# a push) without committing:
+#
+#     pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 24.10.0
+    hooks:
+      - id: black

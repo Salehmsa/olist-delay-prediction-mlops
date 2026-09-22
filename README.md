@@ -4,8 +4,8 @@ MLOps Training 2026/2027 · Task 3 · Qafza Training
 
 Turns the model trained in `notebooks/01`–`06` into a real inference
 service: a Python package, a FastAPI app, data versioning, experiment
-tracking, tests, containers, and — as the remaining sections land — CI/CD
-and monitoring.
+tracking, tests, containers, and a CI/CD pipeline — monitoring is the one
+section still to land.
 
 Training happens only in the notebooks. This service loads the fitted
 objects Notebooks 05 & 06 saved (imputer, encoder, scaler, model) and never
@@ -65,7 +65,12 @@ wired into the running service end to end — not just present as a file.
       real model, `/predict/batch` tested live through the containers;
       connection string environment-driven via `.env`/`.env.example`,
       `.gitignore` added so a real `.env` can never reach the repo
-- [ ] 9. CI/CD
+- [ ] 9. CI/CD — pipeline + pre-commit hooks written and locally validated
+      (`actionlint` on the workflow, the exact CI steps re-run end to end
+      against a simulated fresh checkout, `pre-commit run --all-files`
+      against the real hook repos) — left unchecked on purpose until a real
+      push shows green on GitHub's own Actions tab, not just simulated here;
+      see "CI/CD (Section 9)" below
 - [ ] 10. Monitoring
 
 ## Structure
@@ -119,6 +124,14 @@ olist_mlops_task3_phase1/
 │   │                       registration if none exists yet (fresh clone /
 │   │                       CI) — needs `dvc pull` to have run first, same
 │   │                       as everything else that reads final_model.pkl
+│   ├── fixtures/
+│   │   ├── generate_ci_dummy_model.py   builds the CI-only dummy model
+│   │   │                                  below (Section 9) — re-run only
+│   │   │                                  if feature_list.json's columns
+│   │   │                                  ever change
+│   │   └── ci_dummy_model.pkl            tiny (~26KB), schema-correct,
+│   │                                      committed to git directly — used
+│   │                                      ONLY by CI, never locally/Docker
 │   ├── unit/                preprocessing, feature engineering, utilities
 │   ├── data/                 schema, ranges, nulls, leakage checks
 │   ├── model/                 the model loads, predicts the right shape
@@ -129,6 +142,13 @@ olist_mlops_task3_phase1/
 ├── Dockerfile               the API image — multi-stage, non-root, healthcheck
 ├── Dockerfile.mlflow        the mlflow tracking/registry server image
 ├── docker-compose.yml       mlflow + register + api — one command, fresh clone
+├── .github/
+│   └── workflows/
+│       └── ci.yml            Section 9: lint → format check → test, then
+│                               build+push to GHCR on main only — see
+│                               "CI/CD (Section 9)" below
+├── .pre-commit-config.yaml   the same lint/format checks, run locally
+│                               before a commit — `pre-commit install`
 ├── .env.example             documents MLFLOW_TRACKING_URI + its safe default
 │                             (Section 8: env vars for secrets/connection
 │                             strings) — copy to .env only to override it
@@ -168,8 +188,6 @@ clone" below unless you're re-doing this from scratch):
 
 ```bash
 git init
-git add .
-git commit -m "Initial commit"
 
 dvc init
 dvc config cache.type hardlink,symlink,copy   # cache and working copy share
@@ -189,20 +207,31 @@ dvc remote add -d local_remote C:\dvc_storage\olist_model   # outside the
                                                                # backup
 
 dvc add models/final_model.pkl
-git add models/.gitignore models/final_model.pkl.dvc .dvc/config .dvcignore
-git commit -m "Track final_model.pkl with DVC"
+
+git add .
+git commit -m "Initial commit: Task 3 inference service (DVC-tracked model)"
 
 dvc push
 ```
 
-`dvc add` writes `models/final_model.pkl.dvc` — a small text pointer
-(md5 hash + size + path) — commits that to git instead of the 95MB file
-itself, and auto-adds `/final_model.pkl` to `models/.gitignore` so git
-never tries to track the binary directly. `dvc push` copies the real
-95MB into the remote folder — this is the one genuine extra copy on disk
-that a real backup requires (see the size discussion above); everything
-before it (the working copy vs. DVC's local cache) costs nothing extra
-thanks to the hardlink config.
+**Order matters here, and it's easy to get backwards:** `dvc add` must run
+*before* the first `git add .` / `git commit` — not after. `dvc add`
+writes `models/final_model.pkl.dvc` (a small text pointer: md5 hash + size
++ path) and auto-adds `/final_model.pkl` to `models/.gitignore` *before*
+git ever looks at the directory, so the one `git add .` above correctly
+picks up the pointer and skips the 95MB binary. Commit first and run
+`dvc add` second instead, and git has already captured the raw file into
+its own history — DVC then refuses with `output 'models/final_model.pkl'
+is already tracked by SCM (e.g. Git)`, and even a `git rm --cached` fix
+afterward leaves that 95MB sitting in git's history from the first commit.
+If this happens: `Remove-Item -Recurse -Force .git` (safe pre-push — this
+only discards *local, unpushed* git history, not `.dvc`, which is already
+configured correctly and doesn't need to be redone), `git init` again,
+then resume from `dvc add` above. `dvc push` copies the real 95MB into
+the remote folder — the one genuine extra copy on disk a real backup
+requires (see the size discussion above); everything before it (the
+working copy vs. DVC's local cache) costs nothing extra thanks to the
+hardlink config.
 
 **Fresh clone** (a new machine, or `models/final_model.pkl` missing after
 `git clone` — expected, since it's gitignored and DVC-managed now):
@@ -408,6 +437,124 @@ this is a completely fresh clone). For coverage:
 ```bash
 pytest --cov=src --cov=app --cov-report=term-missing
 ```
+
+## CI/CD (Section 9)
+
+Section 9's task text: a pipeline that runs on every push (lint, format
+check, test); builds and pushes the image only if all of that passes;
+pre-commit hooks so the same checks run locally too; a failed test has to
+actually stop the pipeline, not just get logged and ignored.
+`.github/workflows/ci.yml` and `.pre-commit-config.yaml` implement all four.
+
+### The pipeline
+
+Two jobs, gated so the second can never start before the first fully
+passes:
+
+| Job | Runs on | Steps | When |
+|---|---|---|---|
+| `test` | every push and PR against `main` | ruff → `black --check` → pytest (94 tests) | always |
+| `build-and-push` | `needs: test` | build the API image, push to GHCR as `:latest` and `:<commit sha>` | only a real push to `main`, never a PR |
+
+"A failed test must stop the pipeline" is true here for free, not through
+extra config: GitHub Actions stops a job at its first failing step by
+default (no `continue-on-error` anywhere in the file), and
+`build-and-push` declares `needs: test` — so it simply never starts if
+`test` didn't finish green. Nothing reaches the registry off a broken
+commit. `build-and-push` is further restricted to
+`if: github.event_name == 'push' && github.ref == 'refs/heads/main'`: a
+pull request still runs the full `test` job (so lint/format/test results
+show up on the PR itself), it just never touches the registry — a PR from
+a fork couldn't authenticate to push images anyway, and untrusted branches
+shouldn't publish images regardless.
+
+### Where the image ends up
+
+`ghcr.io/salehmsa/olist-delay-prediction-mlops` — GitHub Container
+Registry, authenticated with the repo's own built-in `GITHUB_TOKEN` (no new
+secret to create or store, consistent with Section 8's "environment
+variables for secrets" — there's simply no secret to manage here at all).
+The image name is lowercased in its own step because `github.repository`
+evaluates to `Salehmsa/olist-delay-prediction-mlops` — capital S included —
+and GHCR, like every OCI registry, rejects uppercase in image names.
+
+### Why CI runs on a dummy model, and what that means for the published image
+
+`models/final_model.pkl` is DVC-tracked (Section 4) against a **local
+folder on your own machine** as its remote — by design, per how Section 4
+was scoped. A GitHub-hosted runner has no way to reach that folder, so
+`dvc pull` isn't an option inside this workflow at all.
+
+That would normally be a dead end: `src/inference/model_registry.py` /
+`pipeline.py` resolve a registered model **at import time**, so without
+*something* loadable at `models/final_model.pkl`, `pytest` can't even
+collect the test suite, and the `register`/`api` containers would crash
+the same way at startup.
+
+The fix is `tests/fixtures/ci_dummy_model.pkl` — a tiny (~26KB),
+schema-correct `RandomForestClassifier` (same 42 features, same interface
+as the real model) generated once by
+`tests/fixtures/generate_ci_dummy_model.py` and committed to git directly
+(small enough to not need DVC). Both jobs copy it over
+`models/final_model.pkl` before doing anything else. This is a deliberate
+substitution, not a shortcut, because of how the tests are already written:
+everything under `tests/model/` and `tests/integration/` asserts
+*structural* contracts only — binary classifier, one prediction/probability
+per row, probability in `[0, 1]`, deterministic, handles missing fields —
+never a specific real-model prediction (see the docstring at the top of
+`tests/model/test_predict.py`). The dummy satisfies every one of those
+contracts, so CI genuinely proves the code wires together correctly.
+
+**In plain terms:** the image this workflow publishes to GHCR on every push
+to `main` answers with this placeholder model, not your real DVC-managed
+one — exactly what a stranger would get from `git clone` + `docker build`
+with no `dvc pull` in between, since CI is that exact scenario. To run the
+*real* model, locally or in Docker, `dvc pull` first (see "Data & artifact
+versioning (DVC)" above), then `docker compose up --build` as normal.
+Nothing about this is hidden: `register_if_needed.py`'s own MLflow tags
+(`metrics_source: notebook_06_evaluation` vs `placeholder`) make it obvious
+from the registry alone which model any given run actually used.
+
+### Pre-commit hooks
+
+The same checks the `test` job runs — file hygiene (trailing whitespace,
+EOF newlines, valid YAML, a 500KB large-file guard, merge-conflict markers),
+ruff `--fix`, black — but locally, before a commit is even made. One-time
+setup:
+
+```bash
+pre-commit install
+```
+
+After that every `git commit` runs the hooks automatically; a failing hook
+blocks the commit (ruff/black may auto-fix files in place — `git add` the
+result and commit again). To run everything on demand without committing:
+
+```bash
+pre-commit run --all-files
+```
+
+The large-file guard isn't a generic default left at whatever it ships
+with — it's set at 500KB on purpose, as the automated version of the exact
+mistake Section 4 already hit once in this project (a large binary staged
+with plain `git add` before `dvc add` got to it — see "Data & artifact
+versioning" above). 500KB comfortably covers every file this repo commits
+to git directly (the encoder/scaler/imputer, `feature_list.json`, the
+~26KB CI dummy model), while the real 95MB `models/final_model.pkl` should
+never be stageable at all once DVC owns it.
+
+### Pushing this for the first time
+
+```bash
+git add .github/workflows/ci.yml .pre-commit-config.yaml tests/fixtures/
+git commit -m "Add CI/CD pipeline (Section 9)"
+git push
+```
+
+Then open the repo's **Actions** tab on GitHub: `test` should go green
+first, `build-and-push` right after it (only for a push to `main`, not a
+PR), and the new image should then show up under **Packages** (the repo's
+sidebar, or your GitHub profile's Packages tab).
 
 ## Known open items
 

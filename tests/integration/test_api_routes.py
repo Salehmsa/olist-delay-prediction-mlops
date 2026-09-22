@@ -39,7 +39,9 @@ def test_unknown_route_returns_404(client):
 # -----------------------------------------------------------------------------
 
 
-def test_predict_valid_order_returns_200_with_prediction_shape(client, valid_order_kwargs):
+def test_predict_valid_order_returns_200_with_prediction_shape(
+    client, valid_order_kwargs
+):
     response = client.post("/predict", json=valid_order_kwargs)
 
     assert response.status_code == 200
@@ -73,7 +75,9 @@ def test_predict_bad_category_returns_422_not_500(client, valid_order_kwargs):
     assert response.status_code == 422
 
 
-def test_predict_negative_price_passes_schema_but_returns_400(client, valid_order_kwargs):
+def test_predict_negative_price_passes_schema_but_returns_400(
+    client, valid_order_kwargs
+):
     """
     The exact case request_schema.py has no ge=0 guard for - well-typed per
     Pydantic, caught one layer deeper by Great Expectations
@@ -92,7 +96,9 @@ def test_predict_negative_price_passes_schema_but_returns_400(client, valid_orde
 
 
 def test_predict_with_every_optional_field_missing_still_returns_200(client):
-    response = client.post("/predict", json={"order_status": "delivered", "customer_state": "SP"})
+    response = client.post(
+        "/predict", json={"order_status": "delivered", "customer_state": "SP"}
+    )
 
     assert response.status_code == 200
 
@@ -119,7 +125,9 @@ def test_predict_example_from_the_openapi_schema_actually_works(client):
 # -----------------------------------------------------------------------------
 
 
-def test_predict_batch_all_valid_returns_200_with_one_result_per_order(client, valid_order_kwargs):
+def test_predict_batch_all_valid_returns_200_with_one_result_per_order(
+    client, valid_order_kwargs
+):
     response = client.post(
         "/predict/batch", json={"orders": [valid_order_kwargs, valid_order_kwargs]}
     )
@@ -143,7 +151,9 @@ def test_predict_batch_mixed_valid_and_invalid_returns_200_with_per_item_errors(
 
     bad_order = {**valid_order_kwargs, "total_payment": -50.0}
 
-    response = client.post("/predict/batch", json={"orders": [valid_order_kwargs, bad_order]})
+    response = client.post(
+        "/predict/batch", json={"orders": [valid_order_kwargs, bad_order]}
+    )
 
     assert response.status_code == 200
     body = response.json()
@@ -167,7 +177,9 @@ def test_predict_batch_preserves_original_order_via_index(client, valid_order_kw
     assert indices == [0, 1, 2]
 
 
-def test_predict_batch_malformed_order_shape_rejects_the_whole_request(client, valid_order_kwargs):
+def test_predict_batch_malformed_order_shape_rejects_the_whole_request(
+    client, valid_order_kwargs
+):
     """
     Unlike a Great-Expectations-level failure, a bad SHAPE (here: an
     order_status the schema never trained on) is a client bug in the
@@ -177,7 +189,9 @@ def test_predict_batch_malformed_order_shape_rejects_the_whole_request(client, v
 
     bad_shape_order = {**valid_order_kwargs, "order_status": "processing"}
 
-    response = client.post("/predict/batch", json={"orders": [valid_order_kwargs, bad_shape_order]})
+    response = client.post(
+        "/predict/batch", json={"orders": [valid_order_kwargs, bad_shape_order]}
+    )
 
     assert response.status_code == 422
 
@@ -189,6 +203,8 @@ def test_predict_batch_empty_orders_list_is_rejected(client):
 
 
 def test_predict_batch_over_the_size_cap_is_rejected(client, valid_order_kwargs):
-    response = client.post("/predict/batch", json={"orders": [valid_order_kwargs] * 501})
+    response = client.post(
+        "/predict/batch", json={"orders": [valid_order_kwargs] * 501}
+    )
 
     assert response.status_code == 422

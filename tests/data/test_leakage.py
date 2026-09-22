@@ -43,7 +43,12 @@ LEAKAGE_SIGNAL_SUBSTRINGS = [
 def test_feature_list_contains_no_post_outcome_signal_names():
     lowered = [name.lower() for name in FEATURE_LIST]
 
-    offenders = [name for name in lowered for signal in LEAKAGE_SIGNAL_SUBSTRINGS if signal in name]
+    offenders = [
+        name
+        for name in lowered
+        for signal in LEAKAGE_SIGNAL_SUBSTRINGS
+        if signal in name
+    ]
 
     assert offenders == [], f"possible leakage in feature_list.json: {offenders}"
 
@@ -69,7 +74,10 @@ def test_raw_request_schema_never_asks_for_a_post_outcome_field(valid_order_kwar
     raw_columns = [c.lower() for c in build_input_dataframe(request).columns]
 
     offenders = [
-        name for name in raw_columns for signal in LEAKAGE_SIGNAL_SUBSTRINGS if signal in name
+        name
+        for name in raw_columns
+        for signal in LEAKAGE_SIGNAL_SUBSTRINGS
+        if signal in name
     ]
 
     assert offenders == []

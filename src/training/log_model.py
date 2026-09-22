@@ -215,8 +215,7 @@ def log_and_register(allow_placeholder: bool = False) -> dict:
     print(f"  alias: {mlflow_config['model_alias']}")
     print(f"  stage: {mlflow_config['model_stage']}")
     print(
-        "  MLflow UI: mlflow ui --backend-store-uri "
-        f"{mlflow_config['tracking_uri']}"
+        "  MLflow UI: mlflow ui --backend-store-uri " f"{mlflow_config['tracking_uri']}"
     )
 
     return {"registered_name": registered_name, "version": version, "run_id": run_id}

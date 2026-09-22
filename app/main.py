@@ -63,9 +63,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     instead gets the per-item handling in the /predict/batch route itself.
     """
 
-    logger.warning(
-        "validation error on %s | errors=%s", request.url.path, exc.errors()
-    )
+    logger.warning("validation error on %s | errors=%s", request.url.path, exc.errors())
 
     return JSONResponse(
         status_code=422,
@@ -83,9 +81,7 @@ async def data_validation_exception_handler(request: Request, exc: DataValidatio
     itself per order so one bad row doesn't fail the whole batch.
     """
 
-    logger.warning(
-        "data validation error on %s | %s", request.url.path, exc.failures
-    )
+    logger.warning("data validation error on %s | %s", request.url.path, exc.failures)
 
     return JSONResponse(
         status_code=400,
@@ -217,7 +213,9 @@ def predict_batch(request: BatchPredictionRequest):
 
         except ValueError as exc:
             results.append(
-                BatchPredictionItem(index=index, success=False, error=f"bad_request: {exc}")
+                BatchPredictionItem(
+                    index=index, success=False, error=f"bad_request: {exc}"
+                )
             )
             failed += 1
 

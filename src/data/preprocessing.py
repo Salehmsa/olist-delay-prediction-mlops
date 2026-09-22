@@ -60,9 +60,7 @@ def apply_imputer(df: pd.DataFrame) -> pd.DataFrame:
 
     transformed_data = imputer.transform(df[NUMERIC_COLUMNS])
 
-    return pd.DataFrame(
-        transformed_data, columns=NUMERIC_COLUMNS, index=df.index
-    )
+    return pd.DataFrame(transformed_data, columns=NUMERIC_COLUMNS, index=df.index)
 
 
 def apply_scaler(df: pd.DataFrame) -> pd.DataFrame:
@@ -77,9 +75,7 @@ def apply_scaler(df: pd.DataFrame) -> pd.DataFrame:
 
     transformed_data = scaler.transform(df[SCALED_COLUMNS])
 
-    return pd.DataFrame(
-        transformed_data, columns=SCALED_COLUMNS, index=df.index
-    )
+    return pd.DataFrame(transformed_data, columns=SCALED_COLUMNS, index=df.index)
 
 
 def apply_encoder(df: pd.DataFrame) -> pd.DataFrame:
@@ -131,7 +127,8 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
     # the encoder produced (review_missing, if SCALED_COLUMNS didn't cover
     # it) is already a complete, engineered column sitting in df untouched.
     still_missing = [
-        column for column in FEATURE_LIST
+        column
+        for column in FEATURE_LIST
         if column not in combined.columns and column in df.columns
     ]
     if still_missing:

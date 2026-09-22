@@ -30,8 +30,6 @@ def predict(model, df):
 
     prediction = model.predict(df)
 
-    probability = (
-        model.predict_proba(df)
-    )[:, 1]
+    probability = (model.predict_proba(df))[:, 1]
 
     return prediction, probability
